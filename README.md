@@ -4,7 +4,8 @@
 
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
-[![Status](https://img.shields.io/badge/status-architecture%20complete%20%C2%B7%20build%20in%20progress-blue)](#roadmap)
+[![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
@@ -25,6 +26,7 @@
 - [Tech Stack](#tech-stack)
 - [System Architecture](#system-architecture)
 - [The Agent Pipeline](#the-agent-pipeline)
+- [What Makes the Agents Agentic](#what-makes-the-agents-agentic)
 - [Application Flow](#application-flow)
 - [Data Model](#data-model)
 - [Data & ML Pipeline](#data--ml-pipeline)
@@ -191,6 +193,66 @@ flowchart LR
 
 ---
 
+## What Makes the Agents Agentic
+
+Ingestion could have been a cron job over a fixed URL list. It is not,
+because the sources punish that design: AAI ships `April2k26Annex4.pdf`
+next to `April2k26Anex5.pdf` (one fewer `n`), January's files carry a `_0`
+suffix, and a correctly-spelled URL returns an HTML error page with
+**HTTP 200**. Naming, layout and availability all drift without notice.
+
+So each agent gets a **goal, a set of tools, and a budget**, and decides
+its own next action from what it has observed:
+
+```mermaid
+flowchart LR
+    G[Goal] --> P[Policy decides<br/>next tool]
+    P --> T[Tool executes]
+    T --> O[Observation]
+    O --> R{Goal met?}
+    R -- no --> P
+    R -- yes --> D[Done]
+    O -. "failure becomes evidence,<br/>not a crash" .-> P
+```
+
+**The policy is pluggable, and that is the point:**
+
+| Policy | Decides by | Used when |
+|---|---|---|
+| `HeuristicPolicy` | deterministic rules that branch on observations | always tried first; runs in CI with no API key |
+| `LLMPolicy` | asks a model to pick the next tool | only when `LLM_BASE_URL` is configured |
+
+Heuristic-first keeps model calls rare: a monthly crawl touching hundreds
+of documents should not re-derive rules we already encoded. Both policies
+emit the identical `AgentRun` trace, so runs stay comparable and replayable.
+
+**The grounding invariant is enforced structurally, not by instruction.**
+A policy may only return a tool name and arguments, validated against the
+registered allowlist before anything executes. It cannot return a
+measurement. Numbers come from parsers; agents decide only *how to get
+them*. A bad completion costs a wasted step, never a corrupted fact.
+
+### Reflection, and what it caught
+
+Each agent's value shows up where it changes course:
+
+| Agent | Reflects on | Real failure it caught |
+|---|---|---|
+| **Discovery** | did this pattern match anything? | Falls down a ladder of looser patterns, so `Anex` is found alongside `Annex` without hard-coding the typo |
+| **Extraction** | did that parser score above the floor? | Sniffs magic bytes and quarantined an HTML error page served as `.pdf` with HTTP 200 |
+| **Reconciliation** | did two source names collapse onto one code? | `BENGALURU (BIAL)` and `BENGALURU (HAL)` are different airports; merging them double-counts the city |
+
+The collision detector earned its place immediately: it caught a **wrong
+ICAO code in our own curated seed file**, where Pithoragarh had been given
+Pasighat's `VEPG`. A pipeline without that check would have published the
+error as fact.
+
+Every run is written to `data/processed/agent_runs.jsonl` with each tool
+call, its arguments and its observation, so agent judgement is auditable
+rather than trusted.
+
+---
+
 ## Application Flow
 
 The chat path is the most interesting one, because it is where grounding is enforced. A question never becomes free-form SQL — it is classified, mapped onto the semantic layer's registered metrics, compiled to SQL against read-only allowlisted views, and validated before a single word of prose is written.
@@ -276,12 +338,23 @@ erDiagram
 
 ### 1. Data sources & collection
 
-| Source | Format | Cadence | Grain |
+Each source below was probed directly; status reflects what actually
+responded, not what was hoped for.
+
+| Source | Status | Format | Grain |
 |---|---|---|---|
-| DGCA traffic statistics | PDF tables | Monthly | Airport × airline × freight tonnage |
-| AAI cargo reports | PDF / XLSX | Monthly | Airport × international/domestic split |
-| `data.gov.in` open datasets | CSV / REST | Irregular | Varies by dataset |
-| Airport operator releases | HTML / PDF | Quarterly | Airport-specific, often commodity-level |
+| **AAI** traffic news, Annexure IV | ✅ **live** | PDF (bilingual) | Airport × month × international/domestic/total, in MT |
+| **Eurostat** `avia_gooa` | ✅ **live** | JSON-stat API | Airport × year × coverage, in tonnes |
+| **OpenFlights** crosswalk | ✅ **live** | CSV | 7,698 airports — reference data, not cargo |
+| **DGCA** traffic statistics | ⚠️ needs discovery | JS portal | Report links are rendered client-side, so no static hrefs exist |
+| **`data.gov.in`** | ⚠️ needs credential | REST | `api.data.gov.in` returns 403 without a free API key |
+| **World Bank** `IS.AIR.GOOD.MT.K1` | ⚠️ degraded | REST | Endpoint timed out repeatedly from our network |
+
+AAI publishes freight as **Annexure IV**, split IV-A international, IV-B
+domestic, IV-C total. Section headings appear only on the first page of
+each section, so continuation pages inherit state. Airport cells are
+bilingual in a single cell (`अमृतसर AMRITSAR`), and values are metric
+tonnes converted to kilograms on the way in.
 
 Every fetch is checksummed and archived to `data/raw/` before parsing, so parser changes can be replayed over history without re-hitting a government endpoint.
 
@@ -322,7 +395,11 @@ Splitting is strictly **time-based** — a random split would leak future inform
 
 ## Evaluation & Acceptance Targets
 
-> **These are acceptance thresholds, not measured results.** The pipeline has not been trained yet — the table below defines what "working" means so the numbers can be filled in honestly after the first full run, rather than guessed at now.
+> **Ingestion rows are measured; model rows are still targets.** The
+> ingestion layer runs, so its numbers below come from an actual run
+> (`data/processed/pipeline_report.json`). No model has been trained yet,
+> so forecast, anomaly and chat rows remain thresholds marked _pending_
+> rather than invented figures.
 
 | Component | Metric | Baseline to beat | Acceptance target | Measured |
 |---|---|---|---|---|
@@ -332,8 +409,17 @@ Splitting is strictly **time-based** — a random split would leak future inform
 | Anomaly | False positives / month | — | ≤ 5 | _pending_ |
 | Chat | Answer accuracy (question bank) | — | ≥ 90% | _pending_ |
 | Chat | Citation validity | — | 100% | _pending_ |
-| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | _pending_ |
+| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (2,585/2,585) |
+| Ingestion | Documents extracted without quarantine | — | ≥ 90% | **100%** (15/15) |
+| Ingestion | Airport-code collisions in output | — | 0 | **0** |
+| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (296/296) |
 | Ingestion | Pipeline freshness after source publish | — | ≤ 24h | _pending_ |
+
+**Current dataset:** 2,585 reconciled facts covering **153 airports across
+5 countries and 9 reporting periods**, from 15 source documents, produced
+by 17 traced agent runs totalling 84 tool calls. The `INTL + DOM = TOTAL`
+figure is an independent cross-check: it recomputes the identity from the
+stored rows rather than trusting the parser that wrote them.
 
 Citation validity is set at 100% deliberately. A single uncited number in an auditable analytics product is a defect, not a tuning parameter.
 
@@ -356,34 +442,36 @@ Citation validity is set at 100% deliberately. A single uncited number in an aud
 
 ```
 Air-Cargo-Intelligence/
-├── .github/workflows/        # CI: lint, type-check, test
-├── docs/
-│   ├── SRS.md                # Full requirements specification
-│   └── assets/               # Diagrams, screenshots
+├── docs/SRS.md               # Full requirements specification
 ├── data/
-│   ├── raw/                  # Immutable source artefacts (git-ignored)
-│   ├── interim/              # Parsed but unreconciled
-│   └── processed/            # Analysis-ready extracts
-├── db/
-│   ├── migrations/           # Alembic revisions
-│   └── seeds/                # Airport/commodity crosswalks
+│   ├── raw/                  # Content-addressed source artefacts + _ledger.jsonl
+│   ├── interim/
+│   └── processed/            # cargo_facts.jsonl, agent_runs.jsonl, report
+├── db/seeds/
+│   ├── airports.csv          # OpenFlights crosswalk (7,698 airports)
+│   └── airport_aliases.csv   # Curated overlay: renames + UDAN-era airports
 ├── services/
-│   ├── ingestion/            # Fetchers, parsers, provenance
-│   ├── agents/               # LangGraph pipeline, one module per agent
-│   ├── ml/                   # Forecast + anomaly models, backtesting
-│   ├── semantic/             # Metric registry, query planner, SQL compiler
-│   └── api/                  # FastAPI routes, schemas, dependencies
-├── web/                      # Next.js dashboards, chat, alerts, reports
+│   ├── common/               # Domain models, config, logging
+│   ├── ingestion/
+│   │   ├── registry.py       # Source registry with honest per-source status
+│   │   ├── fetcher.py        # Magic-byte content verification
+│   │   ├── store.py          # Raw archive + provenance ledger
+│   │   ├── normalise.py      # Units, airport identity, periods
+│   │   ├── seed.py           # Builds the airport crosswalk
+│   │   └── parsers/          # aai_freight, eurostat_freight, registry
+│   └── agents/
+│       ├── base.py           # The agent loop: goal, tools, budget, trace
+│       ├── policy.py         # HeuristicPolicy + LLMPolicy
+│       ├── discovery_agent.py
+│       ├── extraction_agent.py
+│       ├── reconciliation_agent.py
+│       └── orchestrator.py   # Pipeline + CLI
 ├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/             # Golden source documents for parser tests
-├── docker-compose.yml
+│   ├── unit/                 # 53 tests
+│   └── fixtures/             # Golden AAI PDF — the layout-change tripwire
 ├── pyproject.toml
 └── README.md
 ```
-
----
 
 ## Getting Started
 
@@ -425,24 +513,34 @@ cp .env.example .env
 | `LLM_MODEL` | Model identifier used by the narrative and planner agents |
 | `PREFECT_API_URL` | Orchestration server |
 
-### Run locally
+### Run the ingestion pipeline
 
 ```bash
-# Bring up the full stack
-docker compose up -d
-
-# Apply migrations and load reference data
-alembic upgrade head
-python -m services.ingestion.seed
-
-# Run one ingestion + agent cycle over sample data
-python -m services.agents.run --source sample --since 2024-01
-
-# Start the web app
-cd web && npm run dev     # http://localhost:3000
+# 1. Build the airport crosswalk (fetches OpenFlights, ~7,700 airports)
+python -m services.agents.orchestrator --seed
 ```
 
----
+```bash
+# 2. Ingest AAI monthly freight reports
+python -m services.agents.orchestrator --source aai_freight --limit 6
+```
+
+```bash
+# 3. Ingest every live source, India and Europe
+python -m services.agents.orchestrator --all --limit 8
+```
+
+Output lands in `data/processed/`:
+
+| File | Contents |
+|---|---|
+| `cargo_facts.jsonl` | Reconciled facts, tonnage in kilograms, each with a `source_document_id` |
+| `agent_runs.jsonl` | Every agent run: each tool call, its arguments and its observation |
+| `pipeline_report.json` | Run summary, resolution methods, and any review queue |
+
+A run with no model configured uses the deterministic policy and needs no
+API key. Set `LLM_BASE_URL`, `LLM_MODEL` and optionally `LLM_API_KEY` to
+let the model policy handle documents the heuristics do not anticipate.
 
 ## Usage / API Reference
 
@@ -484,28 +582,35 @@ curl -X POST http://localhost:8000/api/v1/chat/query \
 ## Testing
 
 ```bash
-pytest                      # unit + integration
-pytest --cov=services       # with coverage
-cd web && npm test          # frontend
+pytest -q                 # 53 tests
+ruff check services tests
 ```
 
-Test strategy, in the order that catches the most bugs per unit of effort:
+The suite is ordered by bugs-caught-per-effort, and every case in it comes
+from a failure actually observed against live data:
 
-- **Parser golden tests.** Real source documents are checked into `tests/fixtures/` with their expected parse output. Government publishers change PDF layouts without warning, and this is the tripwire that catches it.
-- **Reconciliation unit tests.** Unit conversion, code canonicalisation, and fiscal-period alignment tested against hand-built adversarial cases.
-- **Model backtests.** Forecast quality is asserted against the acceptance thresholds, so a regression fails CI rather than shipping.
-- **Grounding tests.** Every chat answer in the question bank must produce citations that resolve to real source rows; an ungrounded claim fails the suite.
-
----
+- **Golden-fixture parser tests** — `tests/fixtures/aai_annex4_sample.pdf`
+  is a real AAI page. If AAI reshapes the table, CI fails instead of the
+  pipeline silently ingesting nothing.
+- **Content-verification tests** — an HTML error page served as `.pdf`
+  with HTTP 200 must be refused, not parsed.
+- **Reconciliation tests** — `DELHI` must resolve to Indira Gandhi (DEL),
+  not to Safdarjung; `BENGALURU (HAL)` must stay distinct from Kempegowda.
+- **Unit tests** — an unknown mass unit raises rather than defaulting,
+  because a silent wrong unit rescales every number downstream.
 
 ## Roadmap
 
 **Phase 1 · Foundation (current)**
 - [x] Requirements specification and system architecture
 - [x] Data model and provenance design
-- [ ] Ingestion service with PDF/XLSX/CSV parsers
-- [ ] Warehouse schema, migrations, and reference crosswalks
-- [ ] Reconciliation agent with validation gates
+- [x] Agent loop with pluggable heuristic / model policies
+- [x] Discovery, extraction and reconciliation agents with full run traces
+- [x] AAI freight parser (bilingual PDF) and Eurostat JSON-stat parser
+- [x] Airport crosswalk + curated alias overlay; 100% reconciliation
+- [x] Golden-fixture test suite (53 tests)
+- [ ] PostgreSQL warehouse schema and Alembic migrations
+- [ ] DGCA discovery via rendered crawl; `data.gov.in` API key
 
 **Phase 2 · Intelligence**
 - [ ] Trend, anomaly, and forecast agents with backtesting

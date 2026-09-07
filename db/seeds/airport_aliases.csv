@@ -1,0 +1,53 @@
+alias,iata,icao,airport_name,city,country,confidence,note
+KOCHI,COK,VOCI,Cochin International Airport,Kochi,India,verified,city renamed from Cochin
+KOZHIKODE,CCJ,VOCL,Calicut International Airport,Kozhikode,India,verified,city renamed from Calicut
+THIRUVANANTHAPURAM,TRV,VOTV,Trivandrum International Airport,Thiruvananthapuram,India,verified,city renamed from Trivandrum
+MANGALURU,IXE,VOML,Mangalore International Airport,Mangaluru,India,verified,city renamed from Mangalore
+MYSURU,MYQ,VOMY,Mysore Airport,Mysuru,India,verified,city renamed from Mysore
+HUBBALI,HBX,VAHB,Hubli Airport,Hubballi,India,verified,city renamed from Hubli
+BELAGAVI,IXG,VABM,Belgaum Airport,Belagavi,India,verified,city renamed from Belgaum
+PRAYAGRAJ,IXD,VIAL,Prayagraj Airport,Prayagraj,India,verified,city renamed from Allahabad
+KALABURAGI,GBI,VOGB,Kalaburagi Airport,Kalaburagi,India,verified,city renamed from Gulbarga
+PUDUCHERRY,PNY,VOPC,Puducherry Airport,Puducherry,India,verified,city renamed from Pondicherry
+TUTICORIN,TCR,VOTK,Tuticorin Airport,Thoothukudi,India,verified,also spelled Thoothukudi
+ITANAGAR,HGI,VEIG,Donyi Polo Airport,Itanagar,India,verified,opened 2022
+NASIK,ISK,VAOZ,Nashik Airport,Nashik,India,verified,HAL Ozar
+AYODHYA,AYJ,VIAY,Maharishi Valmiki International Airport,Ayodhya,India,verified,opened 2024
+DARBHANGA,DBR,VE93,Darbhanga Airport,Darbhanga,India,verified,UDAN 2020
+DEOGHAR,DGH,VEDO,Deoghar Airport,Deoghar,India,verified,opened 2022
+KUSHINAGAR,KBK,VEKI,Kushinagar International Airport,Kushinagar,India,verified,opened 2021
+PAKYONG,PYG,VEPY,Pakyong Airport,Pakyong,India,verified,Sikkim
+SHIVAMOGGA,RQY,VOSM,Shivamogga Airport,Shivamogga,India,verified,opened 2023
+SINDHUDURG,SDW,VASD,Sindhudurg Airport,Sindhudurg,India,verified,Chipi
+HINDON,HDO,VIDX,Hindon Airport,Ghaziabad,India,verified,civil enclave
+JALGAON,JLG,VAJL,Jalgaon Airport,Jalgaon,India,verified,
+JAGDALPUR,JGB,VEJR,Jagdalpur Airport,Jagdalpur,India,verified,
+RUPSI,RUP,VERU,Rupsi Airport,Rupsi,India,verified,
+COOCHBEHER,COH,VECO,Cooch Behar Airport,Cooch Behar,India,verified,also spelled Coochbehar
+KURNOOL,KJB,VOKU,Kurnool Airport,Kurnool,India,verified,Orvakal
+NAVI MUMBAI,,VANM,Navi Mumbai International Airport,Navi Mumbai,India,needs_verification,IATA code not confirmed
+VIJAYANAGAR,,VOJV,Vijayanagar Airport,Ballari,India,needs_verification,JSW private airport
+MUNDRA,,VAMA,Mundra Airport,Mundra,India,needs_verification,private airport
+JUHU,,VAJJ,Juhu Aerodrome,Mumbai,India,needs_verification,general aviation
+GONDIA,,VAGD,Gondia Airport,Gondia,India,needs_verification,
+AMRAVATI,,VAAB,Amravati Airport,Amravati,India,needs_verification,
+ALIGARH,,VIAH,Aligarh Airport,Aligarh,India,needs_verification,UDAN
+AZAMGARH,,VEAZ,Azamgarh Airport,Azamgarh,India,needs_verification,UDAN
+CHITRAKOOT,,VECT,Chitrakoot Airport,Chitrakoot,India,needs_verification,UDAN
+MORADABAD,,VIMV,Moradabad Airport,Moradabad,India,needs_verification,UDAN
+REWA,,VERW,Rewa Airport,Rewa,India,needs_verification,UDAN
+SHRAVASTI,,VESV,Shravasti Airport,Shravasti,India,needs_verification,UDAN
+DATIA,,VEDT,Datia Airport,Datia,India,needs_verification,UDAN
+PITHORAGARH,,,Pithoragarh Airport (Naini Saini),Pithoragarh,India,needs_verification,Uttarakhand is ICAO region VI not VE; code not confirmed so left blank
+AMBIKAPUR,,VEAM,Ambikapur Airport,Ambikapur,India,needs_verification,UDAN
+BENGALURU,BLR,VOBL,Kempegowda International Airport,Bengaluru,India,verified,city renamed from Bangalore
+NOIDA,,,Noida International Airport,Jewar,India,needs_verification,opened 2025; codes not yet in public reference data
+BENGALURU (BIAL),BLR,VOBL,Kempegowda International Airport,Bengaluru,India,verified,BIAL is the operator of the main airport
+BENGALURU (HAL),,VOBG,HAL Airport,Bengaluru,India,verified,separate airport; no commercial IATA
+HYDERABAD (GHIAL),HYD,VOHS,Rajiv Gandhi International Airport,Hyderabad,India,verified,GHIAL is the operator of the main airport
+HYDERABAD (BEGUMPET),BPM,VOHY,Begumpet Airport,Hyderabad,India,verified,separate older airport
+GOA,GOI,VOGO,Goa International Airport,Dabolim,India,verified,bare GOA historically means Dabolim
+GOA (DABOLIM),GOI,VOGO,Goa International Airport,Dabolim,India,verified,renamed row for the same airport
+GOA (MOPA),GOX,VOGA,Manohar International Airport,Mopa,India,verified,separate airport opened 2022
+KANPUR (CHAKERI),KNU,VIKA,Kanpur Airport,Kanpur,India,verified,Chakeri
+KANPUR (CIVIL),,VIKN,Kanpur Civil Airport,Kanpur,India,verified,separate airfield; no IATA
