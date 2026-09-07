@@ -32,8 +32,13 @@ _COVERAGE = {
     "TOTAL": Direction.TOTAL,
 }
 
-# Freight loaded and unloaded is the closest analogue to the AAI measure.
-_PREFERRED_MEASURES = {"FRM_LD_NLD", "FRM_BRD", "FRM_LD"}
+# Exactly ONE measure, in preference order. Accepting several looks
+# harmless but emits near-identical rows for the same airport-year, which
+# silently double-counts every European total. FRM_LD_NLD (freight loaded
+# and unloaded) is the closest analogue to the AAI figure.
+_MEASURE_PREFERENCE = ("FRM_LD_NLD", "FRM_LD", "FRM_BRD")
+# Likewise one schedule type: TOTAL already contains SCHED plus NSCHED.
+_SCHEDULE = "TOTAL"
 
 
 class EurostatFreightParser:
@@ -74,6 +79,14 @@ class EurostatFreightParser:
             d: data["dimension"][d]["category"].get("label", {}) for d in dim_ids
         }
 
+        # Settle on one measure up front: whichever preferred code this
+        # payload actually carries.
+        available = set(data["dimension"]["tra_meas"]["category"]["index"])
+        measure = next((m for m in _MEASURE_PREFERENCE if m in available), None)
+        if measure is None:
+            result.warnings.append(f"no preferred freight measure in {sorted(available)}")
+            return result
+
         # Row-major strides: last dimension varies fastest.
         strides = [1] * len(sizes)
         for i in range(len(sizes) - 2, -1, -1):
@@ -95,7 +108,9 @@ class EurostatFreightParser:
             # Only cells that survive the dimension filter are candidates.
             if coords.get("unit") != "T":
                 continue
-            if coords.get("tra_meas") not in _PREFERRED_MEASURES:
+            if coords.get("tra_meas") != measure:
+                continue
+            if coords.get("schedule") != _SCHEDULE:
                 continue
             direction = _COVERAGE.get(coords.get("tra_cov") or "")
             if direction is None:

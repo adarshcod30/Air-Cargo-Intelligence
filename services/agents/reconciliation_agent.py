@@ -98,7 +98,23 @@ class ReconciliationAgent(Agent):
                     (f.airport_iata, f.period, f.direction), set()
                 ).add(f.airport_name_raw)
 
+            # Two different names on one code (BENGALURU BIAL vs HAL).
             collided = {k: v for k, v in groups.items() if len(v) > 1}
+
+            # And the other shape of the same bug: one name emitted twice
+            # for the same key. The Eurostat parser once accepted three
+            # freight measures at once, so Frankfurt appeared repeatedly
+            # per year with near-identical tonnage. A name-based check
+            # cannot see that, so count occurrences too.
+            seen: dict[tuple, int] = {}
+            for f in facts:
+                if not f.airport_iata:
+                    continue
+                k = (f.airport_iata, f.period, f.direction)
+                seen[k] = seen.get(k, 0) + 1
+            for k, n in seen.items():
+                if n > 1 and k not in collided:
+                    collided[k] = {f"duplicated x{n}"}
             for f in facts:
                 key = (f.airport_iata, f.period, f.direction)
                 if key in collided:

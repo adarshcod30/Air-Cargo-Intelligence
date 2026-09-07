@@ -409,15 +409,15 @@ Splitting is strictly **time-based** — a random split would leak future inform
 | Anomaly | False positives / month | — | ≤ 5 | _pending_ |
 | Chat | Answer accuracy (question bank) | — | ≥ 90% | _pending_ |
 | Chat | Citation validity | — | 100% | _pending_ |
-| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (2,585/2,585) |
+| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (2,411/2,411) |
 | Ingestion | Documents extracted without quarantine | — | ≥ 90% | **100%** (15/15) |
-| Ingestion | Airport-code collisions in output | — | 0 | **0** |
-| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (296/296) |
+| Ingestion | Airport-code collisions or duplicate keys | — | 0 | **0** |
+| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (358/358) |
 | Ingestion | Pipeline freshness after source publish | — | ≤ 24h | _pending_ |
 
-**Current dataset:** 2,585 reconciled facts covering **153 airports across
-5 countries and 9 reporting periods**, from 15 source documents, produced
-by 17 traced agent runs totalling 84 tool calls. The `INTL + DOM = TOTAL`
+**Current dataset:** 2,411 reconciled facts covering **153 airports across
+5 countries and 9 reporting periods**, from 15 source documents,
+produced by 17 traced agent runs totalling 84 tool calls. The `INTL + DOM = TOTAL`
 figure is an independent cross-check: it recomputes the identity from the
 stored rows rather than trusting the parser that wrote them.
 
