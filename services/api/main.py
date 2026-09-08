@@ -62,7 +62,14 @@ if WEB_DIR.is_dir():
 
     @app.get("/", include_in_schema=False)
     def dashboard() -> FileResponse:
-        return FileResponse(WEB_DIR / "index.html")
+        # The shell is revalidated on every load while the fingerprint-free
+        # assets under /static may still be cached. A stale index.html paired
+        # with a fresh app.js means the script queries for elements that the
+        # cached markup does not contain, and the page never finishes loading.
+        return FileResponse(
+            WEB_DIR / "index.html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
 
 def _latest_period(session: Session, grain: str) -> str:

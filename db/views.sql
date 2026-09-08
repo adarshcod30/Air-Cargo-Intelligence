@@ -174,18 +174,23 @@ SELECT
     -- A run configured for a model but decided entirely by the fallback is
     -- not a model run. Surfacing that here means the console cannot
     -- accidentally present one as the other.
-    -- Absence of a fallback marker is not evidence of model judgement.
-    -- Runs recorded before per-step provenance existed carry no policy on
-    -- any step, and labelling those 'model' would reproduce exactly the
-    -- defect this column was added to expose. They are 'unrecorded'.
+    -- Classified on what the steps positively declare, not on the absence
+    -- of a fallback marker. Counting `fallback_steps = 0` as evidence of
+    -- model judgement inverted the labels outright: a pure-heuristic run
+    -- has no fallbacks either, so it read as 'model', while a run that fell
+    -- back on every single step read as 'heuristic'.
     CASE
         WHEN r.steps = 0 THEN 'none'
-        WHEN NOT EXISTS (
-            SELECT 1 FROM agent_step s
-             WHERE s.agent_run_id = r.agent_run_id AND coalesce(s.policy, '') <> ''
-        ) THEN 'unrecorded'
-        WHEN r.fallback_steps >= r.steps THEN 'heuristic'
-        WHEN r.fallback_steps = 0 THEN 'model'
+        WHEN (SELECT count(*) FROM agent_step s
+               WHERE s.agent_run_id = r.agent_run_id
+                 AND coalesce(s.policy, '') <> '') = 0 THEN 'unrecorded'
+        WHEN (SELECT count(*) FROM agent_step s
+               WHERE s.agent_run_id = r.agent_run_id
+                 AND s.policy LIKE 'llm%') = 0 THEN 'heuristic'
+        WHEN (SELECT count(*) FROM agent_step s
+               WHERE s.agent_run_id = r.agent_run_id
+                 AND s.policy NOT LIKE 'llm%'
+                 AND coalesce(s.policy, '') <> '') = 0 THEN 'model'
         ELSE 'mixed'
     END                                              AS effective_policy,
     (SELECT count(*) FROM agent_step s

@@ -1,109 +1,246 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Air Cargo Intelligence</title>
-  <link rel="stylesheet" href="/static/styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Air Cargo Intelligence</title>
+<meta name="description" content="Agentic analytics over Indian and international air-cargo data, with source-cited answers.">
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>✈</text></svg>">
 </head>
 <body>
-<header>
-  <h1>Air Cargo Intelligence</h1>
-  <span class="sub" id="freshness">loading…</span>
-  <span class="spacer"></span>
-  <button class="ghost" id="theme-toggle" title="Toggle theme">◐</button>
-</header>
 
-<div class="wrap">
+<div class="shell">
+  <div class="scrim" id="scrim" hidden></div>
 
-  <div class="kpis" id="kpis"></div>
-
-  <div class="grid">
-    <div>
-      <!-- Airport rankings -->
-      <section class="card">
-        <h2>Airport rankings
-          <span class="hint" id="ranking-hint"></span>
-        </h2>
-        <div class="controls">
-          <select id="rank-order">
-            <option value="tonnage_mt">By tonnage</option>
-            <option value="growth_yoy_pct">By YoY growth</option>
-          </select>
-          <select id="rank-direction">
-            <option value="TOTAL">Total</option>
-            <option value="INTERNATIONAL">International</option>
-            <option value="DOMESTIC">Domestic</option>
-          </select>
-          <select id="rank-period"><option value="">Latest period</option></select>
-          <span class="dim" style="font-size:12px" id="rank-note"></span>
-        </div>
-        <div class="body flush" id="rankings"><div class="empty">loading…</div></div>
-      </section>
-
-      <!-- Airline share -->
-      <section class="card">
-        <h2>Airline cargo share
-          <span class="hint">industry totals excluded — adding them to carriers double-counts</span>
-        </h2>
-        <div class="body"><div class="chart-holder"><canvas id="airline-chart"></canvas></div></div>
-      </section>
-
-      <!-- Chat -->
-      <section class="card">
-        <h2>Ask the data
-          <span class="hint">answers are checked against stored rows before they are shown</span>
-        </h2>
-        <div class="chat-log" id="chat-log">
-          <div class="empty">Ask about rankings, carriers, anomalies, forecasts or sources.</div>
-        </div>
-        <div class="suggestions" id="suggestions"></div>
-        <form class="chat-input" id="chat-form">
-          <input id="chat-input" placeholder="e.g. Show the top 5 cargo airports by growth" autocomplete="off">
-          <button class="primary" type="submit">Ask</button>
-        </form>
-      </section>
+  <!-- ------------------------------------------------------ sidebar -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">✈</div>
+      <div class="brand-text">
+        <strong>Air Cargo</strong>
+        <span>Intelligence</span>
+      </div>
     </div>
 
-    <div>
-      <!-- Alert feed -->
-      <section class="card">
-        <h2>Alert feed
-          <span class="hint" id="alert-count"></span>
-        </h2>
-        <div class="controls">
-          <select id="alert-severity">
-            <option value="">All severities</option>
-            <option value="HIGH">High only</option>
-            <option value="MEDIUM">Medium and above</option>
-          </select>
-          <select id="alert-grain">
-            <option value="">Airports and airlines</option>
-            <option value="AIRPORT">Airports</option>
-            <option value="AIRLINE">Airlines</option>
-          </select>
-        </div>
-        <div class="body flush" id="alerts"><div class="empty">loading…</div></div>
-      </section>
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-view="overview">
+        <span class="nav-ico">◧</span> Overview
+      </button>
+      <button class="nav-item" data-view="agents">
+        <span class="nav-ico">⬡</span> Agent console
+        <span class="nav-tag" id="nav-agent-count"></span>
+      </button>
+      <button class="nav-item" data-view="intel">
+        <span class="nav-ico">◈</span> Intelligence
+        <span class="nav-tag" id="nav-alert-count"></span>
+      </button>
+      <button class="nav-item" data-view="ask">
+        <span class="nav-ico">◇</span> Ask the data
+      </button>
+      <button class="nav-item" data-view="sources">
+        <span class="nav-ico">▤</span> Provenance
+      </button>
+    </nav>
 
-      <!-- Forecasts -->
-      <section class="card">
-        <h2>Forecasts <span class="hint">80% interval, with backtest error</span></h2>
-        <div class="body flush" id="forecasts"><div class="empty">loading…</div></div>
-      </section>
-
-      <!-- Sources -->
-      <section class="card">
-        <h2>Sources</h2>
-        <div class="body flush" id="sources"><div class="empty">loading…</div></div>
-      </section>
+    <div class="rail-foot">
+      <div class="pipeline-chip" id="pipeline-chip">
+        <span class="dot"></span><span id="pipeline-label">checking…</span>
+      </div>
+      <div class="rail-links">
+        <a href="/docs" target="_blank" rel="noopener">API</a>
+        <a href="/api/v1/reports/brief" target="_blank" rel="noopener">Brief</a>
+        <a href="/metrics" target="_blank" rel="noopener">Metrics</a>
+      </div>
+      <button class="theme-btn" id="theme-toggle" title="Toggle theme">◐ Theme</button>
     </div>
-  </div>
+  </aside>
 
-  <footer id="footer"></footer>
+  <!-- --------------------------------------------------------- main -->
+  <main class="main">
+
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" aria-label="Toggle navigation">☰</button>
+      <div>
+        <h1 id="view-title">Overview</h1>
+        <p class="view-sub" id="view-sub">Cargo throughput across Indian and international airports.</p>
+      </div>
+      <div class="freshness" id="freshness">…</div>
+    </header>
+
+    <!-- ============================================ OVERVIEW ======= -->
+    <section class="view is-active" data-view="overview">
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid two">
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Airport rankings</h2>
+            <div class="controls">
+              <select id="rank-direction" class="sel">
+                <option value="TOTAL">Total</option>
+                <option value="INTERNATIONAL">International</option>
+                <option value="DOMESTIC">Domestic</option>
+              </select>
+              <select id="rank-order" class="sel">
+                <option value="tonnage">By tonnage</option>
+                <option value="growth">By growth</option>
+              </select>
+            </div>
+          </header>
+          <div class="panel-body flush" id="rankings"><div class="loading">loading…</div></div>
+          <footer class="panel-foot" id="rank-note"></footer>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Airline cargo share</h2>
+            <span class="hint">industry aggregates excluded</span>
+          </header>
+          <div class="panel-body" id="airline-chart"><div class="loading">loading…</div></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ======================================== AGENT CONSOLE ======= -->
+    <section class="view" data-view="agents">
+
+      <div class="console-strip" id="agent-totals"></div>
+
+      <div class="grid replay">
+        <article class="panel replay-panel">
+          <header class="panel-head">
+            <h2>Decision replay</h2>
+            <div class="controls">
+              <select id="replay-run" class="sel"></select>
+              <button class="btn primary" id="replay-btn">▶ Replay</button>
+            </div>
+          </header>
+          <div class="panel-body replay-body">
+            <div class="replay-goal" id="replay-goal">
+              <p class="empty">Pick a run and press replay. Each step is a tool the agent
+              chose from its allowlist, with the reasoning behind the choice and what came back.</p>
+            </div>
+            <ol class="steps" id="replay-steps"></ol>
+          </div>
+          <footer class="panel-foot" id="replay-foot"></footer>
+        </article>
+
+        <div class="stack">
+          <article class="panel">
+            <header class="panel-head"><h2>Tool usage</h2>
+              <span class="hint">calls vs runs reveals retries</span></header>
+            <div class="panel-body flush" id="tool-stats"><div class="loading">loading…</div></div>
+          </article>
+          <article class="panel">
+            <header class="panel-head"><h2>Who decided</h2>
+              <span class="hint">per-step policy provenance</span></header>
+            <div class="panel-body" id="policy-stats"><div class="loading">loading…</div></div>
+          </article>
+        </div>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <h2>Recorded runs</h2>
+          <div class="controls">
+            <select id="run-agent" class="sel"><option value="">All agents</option></select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="run-list"><div class="loading">loading…</div></div>
+      </article>
+    </section>
+
+    <!-- ========================================= INTELLIGENCE ======= -->
+    <section class="view" data-view="intel">
+      <div class="grid two">
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Alert feed</h2>
+            <div class="controls">
+              <select id="alert-grain" class="sel">
+                <option value="">All grains</option>
+                <option value="AIRPORT">Airport</option>
+                <option value="AIRLINE">Airline</option>
+              </select>
+            </div>
+          </header>
+          <div class="panel-body flush" id="alerts"><div class="loading">loading…</div></div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Forecasts</h2>
+            <span class="hint">80% interval, backtested</span>
+          </header>
+          <div class="panel-body flush" id="forecasts"><div class="loading">loading…</div></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head"><h2>Written insights</h2>
+          <span class="hint">narrative only — every figure cites a stored row</span></header>
+        <div class="panel-body flush" id="insights"><div class="loading">loading…</div></div>
+      </article>
+    </section>
+
+    <!-- ================================================== ASK ======= -->
+    <section class="view" data-view="ask">
+      <article class="panel tall">
+        <header class="panel-head">
+          <h2>Ask the data</h2>
+          <span class="hint">answers are computed by SQL, never written by a model</span>
+        </header>
+        <div class="panel-body chat-body">
+          <div class="chat-log" id="chat-log">
+            <div class="msg bot">
+              <p>Ask about airport rankings, airline share, anomalies, forecasts or sources.
+              Every figure comes from a stored row and carries the document behind it.</p>
+            </div>
+          </div>
+          <div class="suggestions" id="suggestions"></div>
+          <form class="chat-input" id="chat-form">
+            <input id="chat-input" autocomplete="off"
+                   placeholder="e.g. Which airports grew fastest?">
+            <button class="btn primary" type="submit">Ask</button>
+          </form>
+        </div>
+      </article>
+    </section>
+
+    <!-- =========================================== PROVENANCE ======= -->
+    <section class="view" data-view="sources">
+      <div class="grid two">
+        <article class="panel">
+          <header class="panel-head"><h2>Publishers</h2></header>
+          <div class="panel-body flush" id="sources"><div class="loading">loading…</div></div>
+        </article>
+        <article class="panel">
+          <header class="panel-head"><h2>Passage index</h2>
+            <span class="hint">what retrieval can cite</span></header>
+          <div class="panel-body flush" id="index-stats"><div class="loading">loading…</div></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <h2>Search source documents</h2>
+          <span class="hint">hybrid: dense vectors + full text, fused on rank</span>
+        </header>
+        <div class="panel-body">
+          <form class="chat-input" id="search-form">
+            <input id="search-input" autocomplete="off"
+                   placeholder="e.g. Mumbai international freight">
+            <button class="btn" type="submit">Search</button>
+          </form>
+          <div id="search-results"></div>
+        </div>
+      </article>
+    </section>
+
+  </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

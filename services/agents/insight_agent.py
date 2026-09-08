@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from services.agents.base import Agent, Decision
 from services.agents.policy import default_policy
+from services.common.bedrock import BedrockUnavailable, get_client
 from services.common.config import SETTINGS
 from services.common.logging import get_logger
 from services.common.models import ToolCall
@@ -144,6 +145,7 @@ class InsightAgent(Agent):
                         citations=json.dumps(r["citations"]),
                     ))
                 s.commit()
+            self.context["persisted"] = len(rows)
             return len(rows)
 
     # -------------------------------------------------------- narration --
@@ -161,8 +163,14 @@ class InsightAgent(Agent):
         return _narrate_from_template(item)
 
     def _narrate_with_model(self, item: dict) -> str | None:
-        import httpx
+        """Narrate with a managed model, or return None to use the template.
 
+        This is the one place a model writes prose that a user reads, and it
+        still writes no number: every figure is handed to it in the prompt,
+        and _is_grounded() rejects the output if a figure appears that does
+        not resolve to a stored row. The rejection count is reported, so
+        "0 rejected" is a measurement rather than an assumption.
+        """
         a = item["anomaly"]
         prompt = (
             "Explain this detected air-cargo anomaly in two or three plain "
@@ -177,20 +185,20 @@ class InsightAgent(Agent):
             f"SURROUNDING SERIES: {json.dumps(_jsonable(item['series']), indent=2)}\n"
         )
         try:
-            client = httpx.Client(
-                base_url=SETTINGS.llm_base_url, timeout=SETTINGS.request_timeout,
-                headers=({"Authorization": f"Bearer {SETTINGS.llm_api_key}"}
-                         if SETTINGS.llm_api_key else {}),
-            )
-            resp = client.post("/chat/completions", json={
-                "model": SETTINGS.llm_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-            })
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
+            return get_client().converse(
+                prompt,
+                system=(
+                    "You are a logistics analyst writing a short factual note. "
+                    "You never introduce a figure that was not given to you."
+                ),
+                max_tokens=220,
+                temperature=0.2,
+            ).strip()
+        except BedrockUnavailable as exc:
+            log.warning(f"narration model unavailable ({exc}); using template")
+            return None
         except Exception as exc:
-            log.warning(f"narration model unavailable ({type(exc).__name__}); using template")
+            log.warning(f"narration failed ({type(exc).__name__}); using template")
             return None
 
     # ---------------------------------------------------------- policy --
@@ -210,12 +218,28 @@ class InsightAgent(Agent):
         return Decision(None, {}, "insights complete")
 
     def is_goal_met(self, context: dict[str, Any]) -> bool:
-        return "narratives" in context or context.get("anomalies") == []
+        """Met when the explanations are stored, not when they are composed.
+
+        This previously returned True as soon as `narratives` appeared in
+        the context, which `write_narratives` sets. The base loop checks
+        this after every tool call and breaks when it holds, so `persist`
+        - the next step the plan schedules - was never reached, and the run
+        reported "25 insight(s) written" while the table stayed empty.
+
+        A goal predicate that is satisfied one step before the durable
+        effect will always report success and never produce it.
+        """
+        if context.get("anomalies") == []:
+            return True
+        return "persisted" in context
 
     def summarise(self, context: dict[str, Any]) -> str:
-        n = len(context.get("narratives", []))
+        n = context.get("persisted")
         r = context.get("rejected", 0)
-        return f"{n} insight(s) written, {r} rejected as ungrounded"
+        if n is None:
+            drafted = len(context.get("narratives", []))
+            return f"{drafted} insight(s) drafted but NOT stored, {r} rejected as ungrounded"
+        return f"{n} insight(s) stored, {r} rejected as ungrounded"
 
 
 # ------------------------------------------------------------- helpers --
