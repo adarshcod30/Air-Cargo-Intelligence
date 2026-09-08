@@ -53,8 +53,13 @@ _DIRECTION_HINTS = {
 # ("Details OF Annual Traffic ... Services OF Air Costa FROM 2007-08"),
 # and it is the last one that introduces the carrier.
 _AIRLINE_FROM_TITLE = re.compile(
-    r".*\bof\s+(.+?)\s+(?:from|during|for|on|in)\b", re.I
+    r".*\b(?:of|by)\s+(.+?)\s+(?:from|during|for|on|in)\b", re.I
 )
+# Names that denote the whole industry rather than one carrier.
+_AGGREGATE_AIRLINE = re.compile(
+    r"^(all\s|total\b|private carriers\b|scheduled (?:domestic|foreign) )", re.I
+)
+
 # Rate and ratio columns are not tonnage. Ingesting a percentage as a mass
 # would be worse than ingesting nothing.
 _NON_TONNAGE = re.compile(
@@ -189,6 +194,7 @@ class DataGovInParser:
                         country="India",
                         grain=Grain.AIRLINE,
                         airline=airline,
+                        is_aggregate=bool(_AGGREGATE_AIRLINE.match(airline or "")),
                         resolution_confidence=1.0,
                         resolution_method="airline-from-title",
                     )
@@ -290,6 +296,14 @@ class DataGovInParser:
         return None
 
 
+# Words that only appear in a description, never inside a carrier's name.
+_CLAUSE_WORDS = re.compile(
+    r"\b(statistic|traffic|service|coefficient|aircraft|fleet|strength|"
+    r"utilisation|utilization|growth|percentage|productivity|operating)\b",
+    re.I,
+)
+
+
 def _airline_from_title(title: str) -> str | None:
     """Pull the carrier name out of a dataset title.
 
@@ -300,7 +314,14 @@ def _airline_from_title(title: str) -> str | None:
     if not m:
         return None
     name = re.sub(r"\s+", " ", m.group(1)).strip(" ,.-")
-    # Guard against the regex swallowing a whole clause.
-    if not name or len(name) > 48 or len(name.split()) > 6:
+    # Guard against the regex swallowing a clause instead of a name.
+    # "Fleet Strength and Utilisation of Aircraft by Air India" previously
+    # yielded "Aircraft by Air India"; matching "by" as well as "of" fixes
+    # that, and these checks catch what still slips through.
+    if not name:
+        return None
+    if len(name) > 48 or len(name.split()) > 5:
+        return None
+    if _CLAUSE_WORDS.search(name):
         return None
     return name

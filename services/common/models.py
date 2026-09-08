@@ -124,6 +124,11 @@ class CargoFact:
     resolution_method: str | None = None
     grain: Grain = Grain.AIRPORT
     airline: str | None = None
+    # True when the row is an industry total ("All Scheduled Indian
+    # Airlines") rather than one carrier. Adding those to per-carrier rows
+    # double-counts the whole market, so they are labelled, not dropped -
+    # the totals are useful on their own.
+    is_aggregate: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

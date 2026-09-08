@@ -198,3 +198,56 @@ class TestAirlineGrain:
             "Cargo Traffic of Air India from 2007-08 to 2015-16")
         r = DataGovInParser().parse(self._doc(), payload)
         assert r.confidence >= 0.60, r.summary()
+
+
+class TestAirlineNameQuality:
+    """Two ways the carrier name went wrong on real catalogue titles."""
+
+    @pytest.mark.parametrize(
+        "title,expected",
+        [
+            # 'by' introduces the carrier as often as 'of' does. Matching
+            # only 'of' yielded 'Aircraft by Air India'.
+            ("Fleet Strength and Utilisation of Aircraft by Air India from 2007-08", "Air India"),
+            ("Selected Traffic Coefficients of Scheduled Commercial Traffic "
+             "Carried by Vistara from 2008-09", "Vistara"),
+            ("Details of Annual Traffic and Operating Statistics on Domestic "
+             "Scheduled Services of Air Costa from 2007-08", "Air Costa"),
+            ("Employees Productivity of Blue Dart from 2012-13", "Blue Dart"),
+        ],
+    )
+    def test_carrier_not_a_clause_fragment(self, title, expected):
+        from services.ingestion.parsers.datagovin import _airline_from_title
+        assert _airline_from_title(title) == expected
+
+    def test_description_words_are_never_a_carrier_name(self):
+        from services.ingestion.parsers.datagovin import _airline_from_title
+        assert _airline_from_title("Report of Annual Traffic Statistics from 2010") is None
+
+    @pytest.mark.parametrize("name", [
+        "All Scheduled Indian Airlines", "All Scheduled Private Airlines",
+        "All Scheduled National Airlines", "Private Carriers",
+    ])
+    def test_industry_totals_are_flagged_as_aggregates(self, name):
+        """Adding an industry total to per-carrier rows double-counts the
+        whole market. The totals are useful, so they are labelled rather
+        than discarded."""
+        from services.ingestion.parsers.datagovin import _AGGREGATE_AIRLINE
+        assert _AGGREGATE_AIRLINE.match(name)
+
+    @pytest.mark.parametrize("name", ["Air India", "Indigo", "Blue Dart", "Vistara"])
+    def test_real_carriers_are_not_flagged(self, name):
+        from services.ingestion.parsers.datagovin import _AGGREGATE_AIRLINE
+        assert not _AGGREGATE_AIRLINE.match(name)
+
+    def test_aggregate_flag_reaches_the_fact(self):
+        payload = json.dumps({
+            "index_name": "x",
+            "title": "Scheduled Cargo Traffic of All Scheduled Indian Airlines from 2007-08",
+            "field": [{"name": "_year"}, {"name": "cargo_carried_ton___total"}],
+            "records": [{"_year": "2015-16", "cargo_carried_ton___total": "100"}],
+        }).encode()
+        doc = SourceDocument(publisher=Publisher.DATA_GOV_IN,
+                             source_url="https://api.data.gov.in/resource/x")
+        r = DataGovInParser().parse(doc, payload)
+        assert r.facts and r.facts[0].is_aggregate is True

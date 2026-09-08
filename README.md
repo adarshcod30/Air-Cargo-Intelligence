@@ -5,7 +5,7 @@
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
 [![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-98%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
@@ -346,9 +346,25 @@ responded, not what was hoped for.
 | **AAI** traffic news, Annexure IV | ✅ **live** | PDF (bilingual) | Airport × month × international/domestic/total, in MT |
 | **Eurostat** `avia_gooa` | ✅ **live** | JSON-stat API | Airport × year × coverage, in tonnes |
 | **OpenFlights** crosswalk | ✅ **live** | CSV | 7,698 airports — reference data, not cargo |
-| **`data.gov.in`** (OGD) | 🔑 needs one free key | REST catalogue + REST | 373 aviation datasets, discovered via the catalogue API and pulled by `resource_id` |
+| **`data.gov.in`** (OGD) | ✅ live with one free key | REST catalogue + REST | 373 aviation datasets → 146 air-cargo, **airline × fiscal year** |
 | **DGCA** traffic statistics | ↩︎ covered via OGD | — | DGCA data is republished on `data.gov.in`, so the JS portal need not be scraped |
 | **World Bank** `IS.AIR.GOOD.MT.K1` | ⚠️ degraded | REST | Endpoint timed out repeatedly from our network |
+
+### Two grains, not one
+
+The sources measure different things, and the model records which:
+
+| Grain | Source | Answers |
+|---|---|---|
+| **Airport** × month | AAI, Eurostat | *Which airports are growing?* |
+| **Airline** × fiscal year | data.gov.in (DGCA) | *Which carriers are growing?* |
+
+Every cargo-bearing dataset in the OGD aviation catalogue turned out to be
+airline-level: 141 of them carry no airport column at all and name the
+carrier only in the dataset title. That is not a gap in the source, it is
+a second grain, and it supplies the airline dimension no other source
+provides. Forcing it into the airport shape, or discarding it, would both
+have been wrong - so `CargoFact` records its `grain`.
 
 **On the OGD platform key.** One API key covers the entire platform - this
 was verified against the live API, not assumed. Datasets are addressed by
@@ -421,15 +437,16 @@ Splitting is strictly **time-based** — a random split would leak future inform
 | Anomaly | False positives / month | — | ≤ 5 | _pending_ |
 | Chat | Answer accuracy (question bank) | — | ≥ 90% | _pending_ |
 | Chat | Citation validity | — | 100% | _pending_ |
-| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (2,411/2,411) |
-| Ingestion | Documents extracted without quarantine | — | ≥ 90% | **100%** (15/15) |
+| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (3,466/3,466) |
+| Ingestion | Documents extracted, of those discovered | — | ≥ 90% | 132/169 (37 refused: no cargo column or unidentifiable carrier) |
 | Ingestion | Airport-code collisions or duplicate keys | — | 0 | **0** |
-| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (358/358) |
+| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (367/367) |
 | Ingestion | Pipeline freshness after source publish | — | ≤ 24h | _pending_ |
 
-**Current dataset:** 2,411 reconciled facts covering **153 airports across
-5 countries and 9 reporting periods**, from 15 source documents,
-produced by 17 traced agent runs totalling 84 tool calls. The `INTL + DOM = TOTAL`
+**Current dataset:** 3,466 reconciled facts from three publishers at two
+grains - **147 airports** across **8 countries** and **23 airlines** over
+**25 reporting periods**, drawn from 132 source documents and produced by
+171 traced agent runs totalling 927 tool calls. The `INTL + DOM = TOTAL`
 figure is an independent cross-check: it recomputes the identity from the
 stored rows rather than trusting the parser that wrote them.
 
@@ -446,7 +463,7 @@ Citation validity is set at 100% deliberately. A single uncited number in an aud
 - **Migrations:** Alembic, applied on deploy and version-controlled under `db/migrations/`.
 - **Monitoring:** Prometheus scrapes agent-run duration, ingestion freshness, and query latency; Grafana dashboards and alerts on stale sources or failed runs.
 - **Scaling:** the warehouse is the bottleneck before the models are. Fact tables are partitioned by period, hot aggregates are materialised, and Redis caches dashboard queries. Agent runs are queued, so a slow forecast never blocks ingestion.
-- **Secrets:** supplied by environment only. Nothing sensitive is committed — see `.env.example` for the required keys.
+- **Secrets:** supplied by environment only; nothing sensitive is committed — see `.env.example`. Credentials are also **redacted from logs and stored artefacts**: the OGD platform takes its key as a *query parameter*, so a request URL is not safe to record verbatim. `api-key`, `token` and friends are masked wherever a URL reaches a log line, the provenance ledger or an agent trace.
 
 ---
 

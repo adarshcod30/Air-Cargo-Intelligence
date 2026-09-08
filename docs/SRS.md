@@ -287,6 +287,18 @@ One-click monthly and quarterly briefs with charts embedded, generated from stor
 
 Star schema at grain: **airport × period × direction × commodity × airline**.
 
+Facts arrive at **two grains**, and each fact records which it is:
+
+| Grain | Published by | Key |
+|---|---|---|
+| `AIRPORT` | AAI, Eurostat | airport × month × direction |
+| `AIRLINE` | data.gov.in (DGCA) | airline × fiscal year |
+
+The Open Government Data aviation catalogue is airline-level throughout:
+141 of its cargo-bearing datasets have no airport column and name the
+carrier only in the dataset title. Recording the grain keeps both usable
+without forcing either into the other's shape.
+
 | Table | Type | Purpose |
 |---|---|---|
 | `fact_cargo_movement` | Fact | Tonnage in kilograms, with a provenance reference |
@@ -319,6 +331,7 @@ Star schema at grain: **airport × period × direction × commodity × airline**
 | NFR-5 | Reproducibility | Any published number can be traced to a source document and an agent run |
 | NFR-6 | Security | The query path executes under a read-only role restricted to allowlisted views |
 | NFR-7 | Security | Secrets are supplied by environment only and never committed |
+| NFR-7a | Security | Credentials are redacted from logs, the provenance ledger and agent traces. Query-string keys make a bare URL unsafe to record |
 | NFR-8 | Observability | Agent-run duration, source freshness, and query latency are exported as metrics |
 | NFR-9 | Maintainability | Every parser ships with a golden fixture test |
 | NFR-10 | Portability | The full stack runs locally via Docker Compose with no external API dependency |

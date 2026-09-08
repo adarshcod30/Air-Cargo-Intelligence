@@ -125,5 +125,30 @@ def get(key: str) -> Source | None:
     return next((s for s in REGISTRY if s.key == key), None)
 
 
+def is_runnable(source: Source) -> bool:
+    """Whether this source can actually run right now.
+
+    NEEDS_CREDENTIAL is a statement about configuration, not about the
+    source itself. Once the credential is present the source is as
+    runnable as any other, so the status is resolved at call time rather
+    than being baked in - otherwise supplying a key silently changes
+    nothing and `--all` keeps skipping it.
+    """
+    if source.status is SourceStatus.ACTIVE:
+        return True
+    if source.status is SourceStatus.NEEDS_CREDENTIAL:
+        return bool(_credential_for(source))
+    return False
+
+
+def _credential_for(source: Source) -> str | None:
+    from services.common.config import SETTINGS
+
+    return {
+        "data_gov_in_cargo": SETTINGS.data_gov_in_api_key,
+    }.get(source.key)
+
+
 def active() -> list[Source]:
-    return [s for s in REGISTRY if s.status is SourceStatus.ACTIVE]
+    """Sources that can run now, credentials included."""
+    return [s for s in REGISTRY if is_runnable(s)]
