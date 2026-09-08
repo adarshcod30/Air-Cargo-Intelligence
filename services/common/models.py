@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from services.common.logging import redact
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -68,12 +70,33 @@ class SourceDocument:
         return basis[:16]
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialise for the provenance ledger.
+
+        The URL is redacted because credentials travel in query strings and
+        the ledger is a durable, shareable artefact.
+        """
         d = asdict(self)
+        d["source_url"] = redact(self.source_url)
         d["publisher"] = self.publisher.value
         d["status"] = self.status.value
         d["discovered_at"] = self.discovered_at.isoformat()
         d["doc_id"] = self.doc_id
         return d
+
+
+class Grain(str, Enum):
+    """What a fact is measured *per*.
+
+    The sources do not agree on this, and pretending they do would be a
+    mistake. AAI publishes tonnage per airport per month; the Open
+    Government Data platform publishes cargo per airline per year and
+    carries no airport column at all. Both are real cargo facts, so the
+    grain is recorded rather than one of them being forced into the
+    other's shape or discarded.
+    """
+
+    AIRPORT = "AIRPORT"
+    AIRLINE = "AIRLINE"
 
 
 @dataclass
@@ -99,11 +122,14 @@ class CargoFact:
     reported_change_pct: float | None = None
     resolution_confidence: float = 0.0
     resolution_method: str | None = None
+    grain: Grain = Grain.AIRPORT
+    airline: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["direction"] = self.direction.value
         d["publisher"] = self.publisher.value
+        d["grain"] = self.grain.value
         return d
 
 
@@ -120,6 +146,10 @@ class ExtractionResult:
     facts: list[CargoFact] = field(default_factory=list)
     confidence: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    # Audit trail that is not a problem: the column mapping a parser chose,
+    # for example. Kept separate so recording a decision does not lower the
+    # confidence score the way a real warning should.
+    notes: list[str] = field(default_factory=list)
     rows_seen: int = 0
     rows_kept: int = 0
 
@@ -130,7 +160,8 @@ class ExtractionResult:
     def summary(self) -> str:
         return (
             f"{self.parser}: {self.rows_kept}/{self.rows_seen} rows kept, "
-            f"confidence={self.confidence:.2f}, warnings={len(self.warnings)}"
+            f"confidence={self.confidence:.2f}, warnings={len(self.warnings)}, "
+            f"notes={len(self.notes)}"
         )
 
 
@@ -145,7 +176,10 @@ class ToolCall:
     elapsed_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["args"] = {k: redact(v) if isinstance(v, str) else v for k, v in self.args.items()}
+        d["observation"] = redact(self.observation)
+        return d
 
 
 @dataclass
@@ -181,7 +215,7 @@ class AgentRun:
     def to_dict(self) -> dict[str, Any]:
         return {
             "agent": self.agent,
-            "goal": self.goal,
+            "goal": redact(self.goal),
             "policy": self.policy,
             "succeeded": self.succeeded,
             "steps": self.steps,

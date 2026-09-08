@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from services.common.config import SETTINGS
-from services.common.logging import get_logger
+from services.common.logging import get_logger, redact
 from services.common.models import AgentRun, ToolCall
 
 log = get_logger(__name__)
@@ -95,7 +95,7 @@ class Agent:
         """Drive the loop until the policy stops or the budget runs out."""
         self.context = dict(context)
         run = AgentRun(agent=self.name, goal=goal, policy=self.policy.name)
-        log.info(f"[{self.name}] goal: {goal}  (policy={self.policy.name})")
+        log.info(f"[{self.name}] goal: {redact(goal)}  (policy={self.policy.name})")
 
         for step in range(self.max_steps):
             decision = self.policy.decide(goal, self.tools, run.calls, self.context)
@@ -130,7 +130,7 @@ class Agent:
             call = ToolCall(decision.tool, decision.args, ok, observation, elapsed)
             run.record(call)
             marker = "ok " if ok else "ERR"
-            log.info(f"[{self.name}] {step + 1}. {marker} {decision.tool} -> {observation[:96]}")
+            log.info(f"[{self.name}] {step + 1}. {marker} {decision.tool} -> {redact(observation)[:96]}")
 
             if self.is_goal_met(self.context):
                 break

@@ -18,7 +18,7 @@ from typing import Any
 from services.agents.base import Agent, Decision
 from services.agents.policy import default_policy
 from services.common.config import SETTINGS
-from services.common.logging import get_logger
+from services.common.logging import get_logger, redact
 from services.common.models import (
     DocStatus,
     ExtractionResult,
@@ -104,7 +104,7 @@ class ExtractionAgent(Agent):
             doc.status = DocStatus.QUARANTINED
             doc.note = reason
             self.context["quarantined"] = True
-            log.warning(f"quarantined {doc.source_url}: {reason}")
+            log.warning(f"quarantined {redact(doc.source_url)}: {reason}")
             return reason
 
         @self.tool("accept", "Accept the best extraction so far.")

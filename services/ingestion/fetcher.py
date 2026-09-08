@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import httpx
 
 from services.common.config import SETTINGS
-from services.common.logging import get_logger
+from services.common.logging import get_logger, redact
 
 log = get_logger(__name__)
 
@@ -135,7 +135,7 @@ def fetch(url: str, *, client: httpx.Client | None = None) -> FetchResult:
 
         ok = resp.status_code < 400 and bool(payload)
         result = FetchResult(url, ok, resp.status_code, payload, media, declared, digest, warnings)
-        log.debug(f"fetched {url} -> {result!r}")
+        log.debug(f"fetched {redact(url)} -> {result!r}")
         time.sleep(SETTINGS.polite_delay_s)
         return result
     finally:

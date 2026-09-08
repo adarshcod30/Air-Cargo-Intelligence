@@ -21,6 +21,7 @@ from services.common.models import (
     CargoFact,
     Direction,
     ExtractionResult,
+    Grain,
     Publisher,
     SourceDocument,
 )
@@ -42,6 +43,23 @@ _DIRECTION_HINTS = {
     "domestic": Direction.DOMESTIC,
     "total": Direction.TOTAL,
 }
+
+# Every cargo-bearing dataset in the aviation catalogue turned out to be
+# airline-level, and the carrier is named only in the title:
+#   "...Operating Statistics on Domestic Scheduled Services of Air Costa
+#    from 2007-08 to 2015-16"
+#   "Percentage Growth in Scheduled Cargo Traffic of Air India from ..."
+# The greedy `.*` is deliberate: these titles contain several "of"s
+# ("Details OF Annual Traffic ... Services OF Air Costa FROM 2007-08"),
+# and it is the last one that introduces the carrier.
+_AIRLINE_FROM_TITLE = re.compile(
+    r".*\bof\s+(.+?)\s+(?:from|during|for|on|in)\b", re.I
+)
+# Rate and ratio columns are not tonnage. Ingesting a percentage as a mass
+# would be worse than ingesting nothing.
+_NON_TONNAGE = re.compile(
+    r"percent|growth|_kms|kilometer|kilometre|factor|per_|ratio|productivity", re.I
+)
 
 _UNIT_IN_NAME = [
     (re.compile(r"\bkgs?\b|kilogram", re.I), "kg"),
@@ -117,20 +135,35 @@ class DataGovInParser:
             return result
 
         columns = list(records[0].keys())
+        title = str(data.get("title") or doc.hints.get("title") or "")
+
         airport_col = _pick(columns, _AIRPORT_HINTS)
-        tonnage_col = _pick(columns, _TONNAGE_HINTS)
+        tonnage_col = self._pick_tonnage(columns)
         period_col = _pick(columns, _PERIOD_HINTS)
 
-        result.warnings.append(
+        # No airport column means an airline-level dataset, which is what
+        # this catalogue almost entirely contains. The carrier then has to
+        # come from the title.
+        airline = None if airport_col else _airline_from_title(title)
+        grain = Grain.AIRPORT if airport_col else Grain.AIRLINE
+
+        result.notes.append(
             "column_mapping="
-            + json.dumps({"airport": airport_col, "tonnage": tonnage_col, "period": period_col})
+            + json.dumps({
+                "grain": grain.value, "airport": airport_col,
+                "airline": airline, "tonnage": tonnage_col, "period": period_col,
+            })
         )
 
-        if not (airport_col and tonnage_col):
-            # Refuse rather than emit rows keyed on a guessed column.
-            result.warnings.append(
-                f"cannot map required columns from {columns[:12]}"
-            )
+        if not tonnage_col:
+            result.warnings.append(f"no tonnage column among {columns[:12]}")
+            return result
+        if grain is Grain.AIRPORT and not airport_col:
+            result.warnings.append("airport grain without an airport column")
+            return result
+        if grain is Grain.AIRLINE and not airline:
+            # Refuse rather than attribute tonnage to an unknown carrier.
+            result.warnings.append(f"cannot identify the airline from title: {title[:80]!r}")
             return result
 
         unit = infer_unit(tonnage_col)
@@ -139,12 +172,33 @@ class DataGovInParser:
 
         for rec in records:
             result.rows_seen += 1
-            raw_airport = str(rec.get(airport_col) or "").strip()
             tonnage = parse_number(rec.get(tonnage_col))
-            if not raw_airport or tonnage is None:
+            if tonnage is None:
+                continue
+            period = self._row_period(rec, period_col) or default_period or "unknown"
+
+            if grain is Grain.AIRLINE:
+                result.facts.append(
+                    CargoFact(
+                        airport_name_raw="",
+                        period=period,
+                        direction=direction,
+                        tonnage_kg=to_kilograms(tonnage, unit),
+                        source_document_id=doc.doc_id,
+                        publisher=Publisher.DATA_GOV_IN,
+                        country="India",
+                        grain=Grain.AIRLINE,
+                        airline=airline,
+                        resolution_confidence=1.0,
+                        resolution_method="airline-from-title",
+                    )
+                )
+                result.rows_kept += 1
                 continue
 
-            period = self._row_period(rec, period_col) or default_period or "unknown"
+            raw_airport = str(rec.get(airport_col) or "").strip()
+            if not raw_airport:
+                continue
             record, confidence, method = self.resolver.resolve(
                 raw_airport, country_hint="India"
             )
@@ -175,6 +229,24 @@ class DataGovInParser:
     # ------------------------------------------------------------------ #
 
     @staticmethod
+    def _pick_tonnage(columns: list[str]) -> str | None:
+        """Choose a mass column, never a rate or ratio one.
+
+        The catalogue is full of 'percentage growth in cargo traffic' and
+        'tonne-kms performed' columns. Both contain a cargo hint word; one
+        is a percentage and the other is a distance-weighted measure, and
+        storing either as kilograms would be silently wrong.
+        """
+        safe = [c for c in columns if not _NON_TONNAGE.search(c)]
+        # A total is preferred over a component so freight and mail are
+        # not double-counted when both are present.
+        for preferred in ("total", "freight", "cargo"):
+            for c in safe:
+                if preferred in c.lower() and any(h in c.lower() for h in _TONNAGE_HINTS):
+                    return c
+        return _pick(safe, _TONNAGE_HINTS)
+
+    @staticmethod
     def _infer_direction(title: str, column: str) -> Direction:
         blob = f"{title} {column}".lower()
         for token, direction in _DIRECTION_HINTS.items():
@@ -194,9 +266,18 @@ class DataGovInParser:
         raw = str(rec.get(period_col) or "").strip()
         if not raw:
             return None
+        # '2007-08' is the Indian fiscal year 2007-08, NOT August 2007.
+        # The tell is that the second part is the next year's last two
+        # digits. Reading it as a month would file a full year of cargo
+        # under one wrong month.
         m = re.match(r"^(\d{4})[-/](\d{1,2})$", raw)
         if m:
-            return f"{m.group(1)}-{int(m.group(2)):02d}"
+            year, tail = int(m.group(1)), int(m.group(2))
+            if tail == (year + 1) % 100:
+                return f"{year}-FY"
+            if 1 <= tail <= 12:
+                return f"{year}-{tail:02d}"
+            return f"{year}-A"
         m = re.match(r"^([A-Za-z]+)[ \-,]+(\d{4})$", raw)
         if m:
             try:
@@ -207,3 +288,19 @@ class DataGovInParser:
         if m:
             return f"{m.group(1)}-A"
         return None
+
+
+def _airline_from_title(title: str) -> str | None:
+    """Pull the carrier name out of a dataset title.
+
+    Returns None when the pattern does not match, so the parser refuses
+    rather than attributing tonnage to an unidentified airline.
+    """
+    m = _AIRLINE_FROM_TITLE.search(title or "")
+    if not m:
+        return None
+    name = re.sub(r"\s+", " ", m.group(1)).strip(" ,.-")
+    # Guard against the regex swallowing a whole clause.
+    if not name or len(name) > 48 or len(name.split()) > 6:
+        return None
+    return name

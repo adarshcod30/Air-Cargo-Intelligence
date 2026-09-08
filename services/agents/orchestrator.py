@@ -21,7 +21,7 @@ from services.agents.discovery_agent import DiscoveryAgent
 from services.agents.extraction_agent import ExtractionAgent
 from services.agents.reconciliation_agent import ReconciliationAgent
 from services.common.config import SETTINGS
-from services.common.logging import get_logger
+from services.common.logging import get_logger, redact
 from services.common.models import AgentRun, CargoFact, SourceDocument
 from services.ingestion import registry as source_registry
 from services.ingestion.seed import build_airport_crosswalk
@@ -153,9 +153,10 @@ class Pipeline:
     def _extract_all(self, docs: list[SourceDocument]) -> list[CargoFact]:
         facts: list[CargoFact] = []
         for i, doc in enumerate(docs, start=1):
-            log.info(f"--- document {i}/{len(docs)}: {doc.source_url.rsplit('/', 1)[-1]}")
+            label = doc.hints.get("title") or redact(doc.source_url).rsplit("/", 1)[-1]
+            log.info(f"--- document {i}/{len(docs)}: {label[:80]}")
             agent = ExtractionAgent(store=self.store)
-            run = agent.run(f"extract cargo facts from {doc.source_url}", document=doc)
+            run = agent.run(f"extract cargo facts from {redact(doc.source_url)}", document=doc)
             self.report.runs.append(run)
             self.store.record(doc)
 

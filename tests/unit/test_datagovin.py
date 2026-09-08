@@ -104,17 +104,97 @@ class TestDataGovInParser:
         r = DataGovInParser().parse(self._doc(), payload)
         assert r.facts[0].direction is Direction.INTERNATIONAL
 
-    def test_unmappable_schema_refuses_rather_than_guesses(self):
+    def test_no_tonnage_column_refuses_rather_than_guesses(self):
         payload = self._payload([{"alpha": "x", "beta": "1", "gamma": "2"}])
         r = DataGovInParser().parse(self._doc(), payload)
         assert r.facts == []
-        assert any("cannot map" in w for w in r.warnings)
+        assert any("no tonnage column" in w for w in r.warnings)
 
-    def test_column_mapping_is_recorded_for_audit(self):
+    def test_unidentifiable_airline_refuses(self):
+        """An airline-level dataset whose title names no carrier must be
+        refused, not attributed to an unknown airline."""
+        payload = self._payload([{"cargo_tonnes": "10", "year": "2023"}],
+                                title="Yearly Domestic Traffic by Air")
+        r = DataGovInParser().parse(self._doc(), payload)
+        assert r.facts == []
+        assert any("cannot identify the airline" in w for w in r.warnings)
+
+    def test_column_mapping_is_recorded_as_a_note_not_a_warning(self):
+        """Recording the mapping is an audit trail, not a problem - counting
+        it as a warning docked the confidence score below the floor and
+        quarantined flawless extractions."""
         payload = self._payload([{"Airport_Name": "DELHI", "Freight_Tonnes": "1", "Year": "2023"}])
         r = DataGovInParser().parse(self._doc(), payload)
-        assert any("column_mapping=" in w for w in r.warnings)
+        assert any("column_mapping=" in n for n in r.notes)
+        assert not any("column_mapping=" in w for w in r.warnings)
 
     def test_empty_response_does_not_raise(self):
         r = DataGovInParser().parse(self._doc(), b'{"records": [], "field": []}')
         assert r.facts == [] and r.confidence == 0.0
+
+
+class TestAirlineGrain:
+    """The OGD aviation catalogue is airline-level: 141 of its cargo-bearing
+    datasets carry no airport column at all, and name the carrier only in
+    the dataset title."""
+
+    @staticmethod
+    def _payload(records, title):
+        return json.dumps({"index_name": "x", "title": title,
+                           "field": [{"name": k} for k in records[0]],
+                           "records": records}).encode()
+
+    @staticmethod
+    def _doc():
+        return SourceDocument(publisher=Publisher.DATA_GOV_IN,
+                              source_url="https://api.data.gov.in/resource/x")
+
+    def test_airline_extracted_from_title(self):
+        from services.common.models import Grain
+        payload = self._payload(
+            [{"_year": "2015-16", "cargo_carried_ton___total": "1234"}],
+            "Details of Annual Traffic and Operating Statistics on Domestic "
+            "Scheduled Services of Air Costa from 2007-08 to 2015-16")
+        r = DataGovInParser().parse(self._doc(), payload)
+        assert len(r.facts) == 1
+        f = r.facts[0]
+        assert f.grain is Grain.AIRLINE
+        assert f.airline == "Air Costa"
+        assert f.tonnage_kg == 1_234_000.0
+
+    def test_last_of_in_title_names_the_carrier(self):
+        """These titles contain several 'of's; the last introduces the
+        airline. Matching the first yielded 'Annual Traffic and Operating
+        Statistics' as the carrier name."""
+        from services.ingestion.parsers.datagovin import _airline_from_title
+        t = ("Details of Annual Traffic and Operating Statistics on Domestic "
+             "Scheduled Services of Air Costa from 2007-08")
+        assert _airline_from_title(t) == "Air Costa"
+
+    def test_rate_columns_are_not_read_as_mass(self):
+        """'ton_kms_performed' and 'percentage growth' both contain cargo
+        hint words but are a distance-weighted measure and a percentage."""
+        cols = ["_year", "ton_kms_performed_million___freight",
+                "pax_load_factor_", "cargo_carried_ton___total"]
+        assert DataGovInParser._pick_tonnage(cols) == "cargo_carried_ton___total"
+
+    def test_total_preferred_over_components(self):
+        """Summing freight and mail alongside their total double-counts."""
+        cols = ["cargo_carried_ton___freight", "cargo_carried_ton___mail",
+                "cargo_carried_ton___total"]
+        assert DataGovInParser._pick_tonnage(cols) == "cargo_carried_ton___total"
+
+    def test_fiscal_year_not_read_as_a_month(self):
+        """'2007-08' is the Indian fiscal year, not August 2007. Reading it
+        as a month files a whole year of cargo under one wrong month."""
+        assert DataGovInParser._row_period({"y": "2007-08"}, "y") == "2007-FY"
+        assert DataGovInParser._row_period({"y": "2023-05"}, "y") == "2023-05"
+
+    def test_airline_extraction_scores_above_the_floor(self):
+        """A flawless airline extraction must clear the confidence floor;
+        it previously scored 0.55 because it had no airport code."""
+        payload = self._payload(
+            [{"_year": "2015-16", "cargo_carried_ton___total": str(i)} for i in range(9)],
+            "Cargo Traffic of Air India from 2007-08 to 2015-16")
+        r = DataGovInParser().parse(self._doc(), payload)
+        assert r.confidence >= 0.60, r.summary()

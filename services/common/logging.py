@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 
 _LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -34,3 +35,20 @@ def get_logger(name: str) -> logging.Logger:
         log.setLevel(_LEVEL)
         log.propagate = False
     return log
+
+
+# Query parameters whose values must never reach a log line, a provenance
+# ledger, or an agent trace. Credentials arrive embedded in request URLs
+# (data.gov.in takes `api-key` as a query parameter), so a URL is not safe
+# to record verbatim.
+_SECRET_PARAMS = ("api-key", "api_key", "apikey", "key", "token", "access_token")
+_SECRET_RX = re.compile(
+    r"([?&](?:" + "|".join(_SECRET_PARAMS) + r")=)([^&\s]+)", re.I
+)
+
+
+def redact(text: str) -> str:
+    """Mask credential values inside a URL or any string containing one."""
+    if not text:
+        return text
+    return _SECRET_RX.sub(lambda m: f"{m.group(1)}<redacted>", str(text))

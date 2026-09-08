@@ -15,7 +15,7 @@ from typing import Any
 from services.agents.base import Agent, Decision
 from services.agents.policy import default_policy
 from services.common.logging import get_logger
-from services.common.models import CargoFact, ToolCall
+from services.common.models import CargoFact, Grain, ToolCall
 from services.ingestion.normalise import AirportResolver
 
 log = get_logger(__name__)
@@ -41,6 +41,14 @@ class ReconciliationAgent(Agent):
             facts: list[CargoFact] = self.context["facts"]
             methods: Counter = Counter()
             for fact in facts:
+                # Airline-level rows have no airport to resolve; treating a
+                # blank airport as a failed lookup would quarantine every
+                # one of them.
+                if fact.grain is Grain.AIRLINE:
+                    fact.resolution_confidence = 1.0
+                    fact.resolution_method = "airline-grain"
+                    methods["airline-grain"] += 1
+                    continue
                 if fact.airport_iata:
                     methods[fact.resolution_method or "pre-resolved"] += 1
                     continue
@@ -92,7 +100,7 @@ class ReconciliationAgent(Agent):
             facts: list[CargoFact] = self.context["facts"]
             groups: dict[tuple, set[str]] = {}
             for f in facts:
-                if not f.airport_iata:
+                if not f.airport_iata or f.grain is not Grain.AIRPORT:
                     continue
                 groups.setdefault(
                     (f.airport_iata, f.period, f.direction), set()
@@ -108,7 +116,7 @@ class ReconciliationAgent(Agent):
             # cannot see that, so count occurrences too.
             seen: dict[tuple, int] = {}
             for f in facts:
-                if not f.airport_iata:
+                if not f.airport_iata or f.grain is not Grain.AIRPORT:
                     continue
                 k = (f.airport_iata, f.period, f.direction)
                 seen[k] = seen.get(k, 0) + 1

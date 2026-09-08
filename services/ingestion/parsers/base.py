@@ -36,9 +36,17 @@ def score_extraction(result: ExtractionResult) -> float:
         return 0.0
     yield_ratio = result.rows_kept / result.rows_seen if result.rows_seen else 0.0
     penalty = min(0.3, 0.05 * len(result.warnings))
-    # Either identifier counts as resolved. Requiring IATA specifically
-    # unfairly scored the Eurostat parser at zero, since Eurostat keys its
-    # airports by ICAO and never publishes an IATA code.
-    resolved = sum(1 for f in result.facts if f.airport_iata or f.airport_icao)
+    # What counts as "resolved" depends on the grain. Requiring an airport
+    # code scored the Eurostat parser at zero (it keys by ICAO) and then
+    # scored a flawless airline-level extraction 0.55, below the floor,
+    # because airline facts have no airport at all.
+    from services.common.models import Grain
+
+    def _resolved(f) -> bool:
+        if f.grain is Grain.AIRLINE:
+            return bool(f.airline)
+        return bool(f.airport_iata or f.airport_icao)
+
+    resolved = sum(1 for f in result.facts if _resolved(f))
     resolution = resolved / len(result.facts)
     return round(max(0.0, min(1.0, 0.6 * yield_ratio + 0.4 * resolution - penalty)), 3)

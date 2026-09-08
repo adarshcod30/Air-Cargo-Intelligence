@@ -34,3 +34,42 @@ class TestMediaSniffing:
 
     def test_unknown_content_falls_back(self):
         assert sniff_media_type(b"\x00\x01\x02\x03") == "application/octet-stream"
+
+
+class TestSecretRedaction:
+    """Credentials travel in query strings, so a URL is never safe to log.
+
+    data.gov.in takes `api-key` as a query parameter, which put a live key
+    into stdout, the provenance ledger and the agent traces on disk.
+    """
+
+    def test_api_key_is_masked(self):
+        from services.common.logging import redact
+        url = "https://api.data.gov.in/resource/abc?api-key=SECRET123&format=json"
+        out = redact(url)
+        assert "SECRET123" not in out
+        assert "<redacted>" in out
+        assert "format=json" in out          # non-secret params survive
+
+    def test_other_credential_params_masked(self):
+        from services.common.logging import redact
+        for p in ("api_key", "apikey", "token", "access_token"):
+            assert "S3CR3T" not in redact(f"https://x/y?{p}=S3CR3T&a=1")
+
+    def test_source_document_ledger_entry_has_no_key(self):
+        from services.common.models import Publisher, SourceDocument
+        d = SourceDocument(publisher=Publisher.DATA_GOV_IN,
+                           source_url="https://api.data.gov.in/resource/a?api-key=LIVEKEY")
+        assert "LIVEKEY" not in str(d.to_dict())
+
+    def test_agent_run_trace_has_no_key(self):
+        from services.common.models import AgentRun, ToolCall
+        run = AgentRun(agent="a", goal="fetch https://x?api-key=LIVEKEY", policy="heuristic")
+        run.record(ToolCall("fetch", {"url": "https://x?api-key=LIVEKEY"}, True,
+                            "got https://x?api-key=LIVEKEY"))
+        assert "LIVEKEY" not in str(run.to_dict())
+
+    def test_urls_without_secrets_are_untouched(self):
+        from services.common.logging import redact
+        url = "https://www.aai.aero/traffic-news/April2k26Annex4.pdf"
+        assert redact(url) == url

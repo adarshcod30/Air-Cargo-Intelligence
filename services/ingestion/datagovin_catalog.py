@@ -12,9 +12,12 @@ platform rather than assumed:
    the full resource index, and it accepts the same key. That is how the
    aviation subset is discovered instead of being hard-coded.
 
-The platform has no server-side sector filter on `/lists`, so the index is
-paged locally and filtered here. It is ~200k records, so the result is
-cached to disk and reused.
+`/lists` does support a server-side sector filter, in the undocumented
+form `filters[sector]=Aviation`. It is case-sensitive: `Aviation` returns
+373 records and matches the portal exactly, while `aviation` returns
+zero. Using it turns a 287,810-record crawl into four requests, so the
+filter is applied server-side and the local classifier then narrows
+aviation down to air-cargo specifically.
 """
 
 from __future__ import annotations
@@ -115,8 +118,17 @@ class OgdCatalogue:
 
     # ------------------------------------------------------------------ #
 
-    def fetch_index(self, limit: int = 100, max_records: int = 250_000) -> list[OgdResource]:
-        """Download the full resource index, page by page."""
+    def fetch_index(
+        self,
+        limit: int = 100,
+        max_records: int = 250_000,
+        sector: str | None = "Aviation",
+    ) -> list[OgdResource]:
+        """Download the resource index, page by page.
+
+        `sector` is passed straight to the platform's own filter. It is
+        case-sensitive there, so it is sent verbatim.
+        """
         if not self.api_key:
             raise MissingApiKey()
 
@@ -131,12 +143,22 @@ class OgdCatalogue:
                     "offset": offset,
                     "limit": limit,
                 }
-                try:
-                    resp = client.get(LISTS_URL, params=params)
-                    resp.raise_for_status()
-                    payload = resp.json()
-                except Exception as exc:
-                    log.warning(f"catalogue page at offset {offset} failed: {exc}")
+                if sector:
+                    params["filters[sector]"] = sector
+                payload = None
+                for attempt in range(1, SETTINGS.max_retries + 1):
+                    try:
+                        resp = client.get(LISTS_URL, params=params)
+                        resp.raise_for_status()
+                        payload = resp.json()
+                        break
+                    except Exception as exc:
+                        log.warning(
+                            f"catalogue offset {offset} attempt {attempt}: "
+                            f"{type(exc).__name__}"
+                        )
+                        time.sleep(SETTINGS.polite_delay_s * attempt)
+                if payload is None:
                     break
 
                 records = payload.get("records") or []
@@ -144,9 +166,11 @@ class OgdCatalogue:
                     break
                 for rec in records:
                     resources.append(_to_resource(rec))
+                total = payload.get("total")
                 offset += limit
-                if offset % 1000 == 0:
-                    log.info(f"catalogue: {len(resources)} resources indexed")
+                log.info(f"catalogue: {len(resources)}/{total} indexed")
+                if total is not None and len(resources) >= int(total):
+                    break
                 time.sleep(SETTINGS.polite_delay_s)
 
         log.info(f"catalogue complete: {len(resources)} resources")
