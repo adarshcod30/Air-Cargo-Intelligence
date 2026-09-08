@@ -123,3 +123,32 @@ class TestChat:
 
     def test_a_too_short_question_is_rejected(self, client):
         assert client.post("/api/v1/chat/query", json={"question": "a"}).status_code == 422
+
+
+class TestRankingsCompareLikeWithLike:
+    """A ranking that mixes period kinds looks authoritative and is
+    meaningless. Without a period scope the endpoint summed across every
+    period held, so Eurostat's annual figure for Frankfurt (3.8m MT for a
+    year) outranked Delhi's monthly one (105k MT for a month)."""
+
+    def test_default_ranking_is_scoped_to_one_period(self, client):
+        body = client.get("/api/v1/airports/rankings?limit=20").json()
+        periods = {r.get("period") for r in body["rows"] if "period" in r}
+        assert len(periods) <= 1
+        assert "period=" in body["explanation"]
+
+    def test_annual_figures_do_not_outrank_monthly_ones(self, client):
+        """Frankfurt's yearly total must not head a monthly league table."""
+        body = client.get("/api/v1/airports/rankings?limit=10").json()
+        codes = [r["airport_iata"] for r in body["rows"]]
+        assert codes and codes[0] == "DEL", codes
+
+    def test_an_explicit_period_is_respected(self, client):
+        body = client.get("/api/v1/airports/rankings?period=2026-01&limit=5").json()
+        assert "2026-01" in body["explanation"]
+        assert body["row_count"] > 0
+
+    def test_period_kind_is_filterable(self):
+        """So a caller can compare annual with annual when they want to."""
+        from services.semantic.registry import DIMENSIONS, FILTERS
+        assert "period_kind" in FILTERS and "period_kind" in DIMENSIONS

@@ -9,8 +9,12 @@ with its citations.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -44,6 +48,28 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# The dashboard is served by the API rather than from a separate dev
+# server: it is the same origin, so there is no CORS dance, and there is
+# nothing to build before it will run.
+WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+if WEB_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(WEB_DIR / "index.html")
+
+
+def _latest_period(session: Session, grain: str) -> str:
+    """The most recent period held at this grain."""
+    row = session.execute(
+        text("SELECT period FROM v_cargo_fact WHERE grain = :g "
+             "ORDER BY sort_key DESC LIMIT 1"),
+        {"g": grain},
+    ).first()
+    return row[0] if row else "unknown"
 
 
 def _execute(session: Session, spec: QuerySpec) -> QueryResponse:
@@ -97,15 +123,22 @@ def airport_rankings(
     limit: int = Query(20, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> QueryResponse:
-    """Airports ranked by tonnage or by year-on-year growth."""
-    filters: dict = {"grain": "AIRPORT", "direction": direction}
+    """Airports ranked by tonnage or by year-on-year growth.
+
+    A ranking is always scoped to one period. Without that the endpoint
+    summed across every period held, so Eurostat's annual figure for
+    Frankfurt (3.8m MT for a year) outranked Delhi's monthly one
+    (105k MT for a month) - a league table that looks authoritative and
+    compares a year against a month.
+    """
+    if period is None:
+        period = _latest_period(session, "AIRPORT")
+    filters: dict = {"grain": "AIRPORT", "direction": direction, "period": period}
     floor = min_tonnage_mt if min_tonnage_mt is not None else (
         100.0 if order_by == "growth_yoy_pct" else None
     )
     if floor:
         filters["min_tonnage_kg"] = floor * 1000.0
-    if period:
-        filters["period"] = period
     if country:
         filters["country"] = country
     return _execute(session, QuerySpec(

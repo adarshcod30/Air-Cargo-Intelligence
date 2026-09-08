@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Air Cargo Intelligence</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <h1>Air Cargo Intelligence</h1>
+  <span class="sub" id="freshness">loading…</span>
+  <span class="spacer"></span>
+  <button class="ghost" id="theme-toggle" title="Toggle theme">◐</button>
+</header>
+
+<div class="wrap">
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div>
+      <!-- Airport rankings -->
+      <section class="card">
+        <h2>Airport rankings
+          <span class="hint" id="ranking-hint"></span>
+        </h2>
+        <div class="controls">
+          <select id="rank-order">
+            <option value="tonnage_mt">By tonnage</option>
+            <option value="growth_yoy_pct">By YoY growth</option>
+          </select>
+          <select id="rank-direction">
+            <option value="TOTAL">Total</option>
+            <option value="INTERNATIONAL">International</option>
+            <option value="DOMESTIC">Domestic</option>
+          </select>
+          <select id="rank-period"><option value="">Latest period</option></select>
+          <span class="dim" style="font-size:12px" id="rank-note"></span>
+        </div>
+        <div class="body flush" id="rankings"><div class="empty">loading…</div></div>
+      </section>
+
+      <!-- Airline share -->
+      <section class="card">
+        <h2>Airline cargo share
+          <span class="hint">industry totals excluded — adding them to carriers double-counts</span>
+        </h2>
+        <div class="body"><div class="chart-holder"><canvas id="airline-chart"></canvas></div></div>
+      </section>
+
+      <!-- Chat -->
+      <section class="card">
+        <h2>Ask the data
+          <span class="hint">answers are checked against stored rows before they are shown</span>
+        </h2>
+        <div class="chat-log" id="chat-log">
+          <div class="empty">Ask about rankings, carriers, anomalies, forecasts or sources.</div>
+        </div>
+        <div class="suggestions" id="suggestions"></div>
+        <form class="chat-input" id="chat-form">
+          <input id="chat-input" placeholder="e.g. Show the top 5 cargo airports by growth" autocomplete="off">
+          <button class="primary" type="submit">Ask</button>
+        </form>
+      </section>
+    </div>
+
+    <div>
+      <!-- Alert feed -->
+      <section class="card">
+        <h2>Alert feed
+          <span class="hint" id="alert-count"></span>
+        </h2>
+        <div class="controls">
+          <select id="alert-severity">
+            <option value="">All severities</option>
+            <option value="HIGH">High only</option>
+            <option value="MEDIUM">Medium and above</option>
+          </select>
+          <select id="alert-grain">
+            <option value="">Airports and airlines</option>
+            <option value="AIRPORT">Airports</option>
+            <option value="AIRLINE">Airlines</option>
+          </select>
+        </div>
+        <div class="body flush" id="alerts"><div class="empty">loading…</div></div>
+      </section>
+
+      <!-- Forecasts -->
+      <section class="card">
+        <h2>Forecasts <span class="hint">80% interval, with backtest error</span></h2>
+        <div class="body flush" id="forecasts"><div class="empty">loading…</div></div>
+      </section>
+
+      <!-- Sources -->
+      <section class="card">
+        <h2>Sources</h2>
+        <div class="body flush" id="sources"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
 [![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-218%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
@@ -76,7 +76,7 @@
 
 | Layer | Technology | Why |
 |---|---|---|
-| Frontend | Next.js 15 (App Router), TypeScript, Tailwind CSS, Recharts | Server components keep dashboard payloads small; Recharts covers the chart vocabulary without a licence. |
+| Frontend | Single-page dashboard served by the API, Chart.js | The dashboard must reach a local API, so serving it same-origin removes both a build step and a CORS dance. Chart.js covers the chart vocabulary from a CDN. |
 | API | FastAPI, Pydantic v2, Uvicorn | Typed request/response contracts that generate the OpenAPI spec the frontend consumes. |
 | Agent orchestration | LangGraph | The pipeline is a stateful DAG with retries and checkpointing, not a linear script — a graph runtime models that honestly. |
 | Language model | Provider-agnostic adapter over any OpenAI-compatible endpoint; Ollama (Llama 3.1 / Mistral) for offline development | Keeps the reasoning layer swappable and lets the whole stack run locally with no API spend. |
@@ -503,8 +503,12 @@ Air-Cargo-Intelligence/
 │   │   ├── executor.py       # Runs it, attaches provenance
 │   │   └── nl.py             # Intent -> registered metrics -> prose
 │   └── api/
-│       ├── main.py           # FastAPI routes
+│       ├── main.py           # FastAPI routes; also serves the dashboard
 │       └── schemas.py        # Request/response contracts
+├── web/                      # Dashboard and alert feed (served at /)
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
 │   └── agents/
 │       ├── base.py           # The agent loop: goal, tools, budget, trace
 │       ├── policy.py         # HeuristicPolicy + LLMPolicy
@@ -588,6 +592,13 @@ python -m services.warehouse.loader
 ```bash
 # 5. Compute trends, anomalies and forecasts
 python -m services.agents.analytics_agent
+```
+
+```bash
+# 6. Serve the API and the dashboard
+uvicorn services.api.main:app --reload
+# dashboard  http://127.0.0.1:8000/
+# API docs   http://127.0.0.1:8000/docs
 ```
 
 Output lands in `data/processed/`:
@@ -701,7 +712,9 @@ from a failure actually observed against live data:
 - [x] Semantic layer and metric registry
 - [x] REST API with citations on every response
 - [x] Grounded natural-language querying
-- [ ] Dashboards, alert feed, auto-generated reports
+- [x] Dashboard with rankings, carrier share and a chat panel
+- [x] Alert feed with severity and grain filters
+- [ ] Auto-generated periodic reports
 
 **Phase 3 · Scale**
 - [ ] Global cargo sources (IATA, Eurostat)

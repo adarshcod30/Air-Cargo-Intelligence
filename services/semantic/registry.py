@@ -123,6 +123,7 @@ DIMENSIONS: dict[str, Dimension] = {
         Dimension("airline_name", "Airline.", "airline_name",
                   frozenset({"AIRLINE"})),
         Dimension("period", "Reporting period label.", "period"),
+        Dimension("period_kind", "MONTH, FISCAL or ANNUAL.", "period_kind"),
         Dimension("calendar_year", "Calendar year.", "calendar_year"),
         Dimension("direction", "International, domestic or total.", "direction"),
         Dimension("publisher", "Publishing body.", "publisher"),
@@ -144,6 +145,12 @@ FILTERS: dict[str, Filter] = {
         Filter("period_from", "Periods at or after this label.",
                "sort_key >= (SELECT min(sort_key) FROM v_cargo_fact WHERE period = :value)",
                "str"),
+        Filter(
+            "period_kind",
+            "MONTH, FISCAL or ANNUAL. Comparing a month against a year makes "
+            "a ranking meaningless, so a league table should fix this.",
+            "period_kind = :value", "str",
+        ),
         Filter("calendar_year", "Calendar year.", "calendar_year = :value", "int"),
         Filter("country", "Country name.", "country = :value", "str"),
         Filter("airport_iata", "Airport IATA code.", "airport_iata = :value", "str"),
