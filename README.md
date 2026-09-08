@@ -4,16 +4,15 @@
 
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
-[![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
+[![Status](https://img.shields.io/badge/status-end--to--end%20working-brightgreen)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-272%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
 [![Postgres](https://img.shields.io/badge/postgres-16-4169E1?logo=postgresql&logoColor=white)](db/)
 [![Last Commit](https://img.shields.io/github/last-commit/adarshcod30/Air-Cargo-Intelligence)](.)
 [![Issues](https://img.shields.io/github/issues/adarshcod30/Air-Cargo-Intelligence)](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
 
-[**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Report Bug**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues) &nbsp;·&nbsp; [**Request Feature**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
+[**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Sample brief**](docs/assets/sample-brief.md) &nbsp;·&nbsp; [**Report Bug**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues) &nbsp;·&nbsp; [**Request Feature**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
 
 </div>
 
@@ -63,7 +62,7 @@
 |---|---|
 | **Multi-source ingestion** | Pulls DGCA, AAI, `data.gov.in`, and airport-operator releases on a schedule. Handles PDF table extraction, Excel, and CSV, checksums every artefact, and records full provenance. |
 | **Automated reconciliation** | Canonicalises airport codes, normalises tonnage units, aligns fiscal-to-calendar periods, and deduplicates overlapping reports into one conformed fact table. |
-| **Trend intelligence** | Computes YoY / MoM / CAGR, market-share shift, and seasonally adjusted growth across airport, airline, state, and commodity dimensions. |
+| **Trend intelligence** | Computes YoY / MoM / CAGR, market-share shift and seasonally adjusted growth across airport, airline and direction. Commodity is out of scope: no public source publishes cargo split that way — see [the SRS](docs/SRS.md#82-warehouse-model). |
 | **Anomaly detection** | Flags unusual movements via STL residual z-scores plus an Isolation Forest ensemble, scored by severity and deduplicated against known seasonality. |
 | **Root-cause narratives** | Generates a plain-language explanation for each flagged anomaly, grounded in correlated series and the source rows that triggered it. |
 | **Short-term forecasting** | SARIMA and gradient-boosted baselines with rolling-origin backtesting, published with prediction intervals rather than bare point estimates. |
@@ -74,23 +73,22 @@
 
 ## Tech Stack
 
+Only what the code actually uses. Anything aspirational lives in the
+roadmap instead, because a stack table that lists tools the project does
+not import is a claim a reader cannot check.
+
 | Layer | Technology | Why |
 |---|---|---|
-| Frontend | Single-page dashboard served by the API, Chart.js | The dashboard must reach a local API, so serving it same-origin removes both a build step and a CORS dance. Chart.js covers the chart vocabulary from a CDN. |
-| API | FastAPI, Pydantic v2, Uvicorn | Typed request/response contracts that generate the OpenAPI spec the frontend consumes. |
-| Agent orchestration | LangGraph | The pipeline is a stateful DAG with retries and checkpointing, not a linear script — a graph runtime models that honestly. |
-| Language model | Provider-agnostic adapter over any OpenAI-compatible endpoint; Ollama (Llama 3.1 / Mistral) for offline development | Keeps the reasoning layer swappable and lets the whole stack run locally with no API spend. |
-| Ingestion | `httpx`, `pdfplumber`, `camelot-py`, `openpyxl`, `pandas` | DGCA and AAI publish tabular data inside PDFs; extraction is a first-class problem, not a footnote. |
-| Orchestration | Prefect 3 | Scheduled flows with observable retries and backfills for slow, flaky government endpoints. |
-| Warehouse | PostgreSQL 16 (star schema) + `pgvector` | One transactional store for facts, provenance, and semantic memory. |
-| Local analytics | DuckDB | Fast columnar exploration over `data/processed/` without touching the warehouse. |
-| ML | `statsmodels`, `Prophet`, `scikit-learn`, `XGBoost` | Classical time-series is the right tool for ~monthly aggregates with strong seasonality and short history. |
-| Cache & queue | Redis | Query result caching plus the task broker behind long-running agent runs. |
-| Infra | Docker, Docker Compose | One command to stand up the entire stack including the database. |
-| CI/CD | GitHub Actions | Lint, type-check, and test gates on every pull request. |
-| Observability | `structlog`, Prometheus, Grafana | Per-agent run metrics, ingestion freshness, and query latency. |
-
----
+| Dashboard | Single-page app served by the API, Chart.js | It has to reach a local API, so same-origin removes both a build step and a CORS dance. |
+| API | FastAPI, Pydantic v2, Uvicorn | Typed contracts that generate the OpenAPI spec the dashboard consumes. |
+| Agents | Custom loop with pluggable policies | A goal, tools, a budget and a recorded trace. The policy is heuristic by default and a language model when one is configured. |
+| Language model | Any OpenAI-compatible endpoint; optional | Used only to choose a tool or narrate supplied rows. The pipeline runs fully without one. |
+| Ingestion | `httpx`, `pdfplumber`, `pandas` | DGCA and AAI publish tabular data inside PDFs; extraction is a first-class problem here, not a footnote. |
+| Warehouse | PostgreSQL 16, SQLAlchemy, Alembic | One store for facts, provenance and agent output, with the guarantees held in the schema. |
+| Analytics | `statsmodels`, `scikit-learn`, `numpy` | Classical time series suits monthly aggregates with strong seasonality and short history. |
+| Scheduling | Plain scheduler + GitHub Actions cron | One linear daily chain over a few public endpoints. A workflow engine would add a dependency without removing a problem. |
+| Observability | Prometheus exposition at `/metrics` | Fact counts, source staleness and last-run status. |
+| CI | GitHub Actions | Lint, type-check and the suite against a real Postgres on every push. |
 
 ## System Architecture
 
@@ -423,49 +421,73 @@ Splitting is strictly **time-based** — a random split would leak future inform
 
 ## Evaluation & Acceptance Targets
 
-> **Ingestion rows are measured; model rows are still targets.** The
-> ingestion layer runs, so its numbers below come from an actual run
-> (`data/processed/pipeline_report.json`). No model has been trained yet,
-> so forecast, anomaly and chat rows remain thresholds marked _pending_
-> rather than invented figures.
+> **Measured, not intended.** Every figure comes from
+> `python -m services.evaluation.acceptance`, which reads the warehouse
+> and the backtests. Criteria that cannot honestly be measured yet say so
+> rather than being estimated.
 
-| Component | Metric | Baseline to beat | Acceptance target | Measured |
+| Component | Metric | Target | Measured | Status |
 |---|---|---|---|---|
-| Forecast | MAPE (3-month horizon) | Seasonal naive | ≤ 12% | _pending_ |
-| Forecast | 80% interval coverage | — | 75–85% | _pending_ |
-| Anomaly | Precision @ 80% recall | ±2σ threshold | ≥ 0.70 | _pending_ |
-| Anomaly | False positives / month | — | ≤ 5 | _pending_ |
-| Chat | Answer accuracy (question bank) | — | ≥ 90% | _pending_ |
-| Chat | Citation validity | — | 100% | _pending_ |
-| Ingestion | Rows reconciled without manual mapping | — | ≥ 95% | **100%** (3,466/3,466) |
-| Ingestion | Documents extracted, of those discovered | — | ≥ 90% | 132/169 (37 refused: no cargo column or unidentifiable carrier) |
-| Ingestion | Airport-code collisions or duplicate keys | — | 0 | **0** |
-| Ingestion | INTL + DOM = TOTAL cross-check | — | ≥ 99% | **100%** (367/367) |
-| Ingestion | Pipeline freshness after source publish | — | ≤ 24h | _pending_ |
+| Ingestion | Rows reconciled without manual mapping | ≥ 95% | 99.6% (12,692/12,742) | **met** |
+| Ingestion | Documents either extracted or refused with a reason<br><sub>154 extracted, 44 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (198/198) | **met** |
+| Ingestion | INTL + DOM = TOTAL, recomputed from stored rows | ≥ 99% | 99.3% (1,640/1,651) | **met** |
+| Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
+| Forecast | Median backtest MAPE (1 step)<br><sub>125 of 197 series where SARIMA beat the baseline</sub> | ≤ 12% | 16.4% | below target |
+| Forecast | 80% interval coverage<br><sub>needs at least 20 forecast periods the warehouse already holds; measurable once a forecast horizon has elapsed</sub> | 75–85% | insufficient overlap (8 sample(s)) | not measured |
+| Anomaly | Alerts per month<br><sub>counts all three directions; TOTAL largely mirrors DOMESTIC</sub> | ≤ 5 | 11.9 | below target |
+| Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | 6.8 | below target |
+| Anomaly | Precision at 80% recall<br><sub>needs a hand-labelled set of known cargo events; not built</sub> | ≥ 0.70 | not measured | not measured |
+| Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
+| Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
+| Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
 
-**Current dataset:** 3,466 reconciled facts from three publishers at two
-grains - **147 airports** across **8 countries** and **23 airlines** over
-**25 reporting periods**, drawn from 132 source documents and produced by
-171 traced agent runs totalling 927 tool calls. The `INTL + DOM = TOTAL`
-figure is an independent cross-check: it recomputes the identity from the
-stored rows rather than trusting the parser that wrote them.
+**Current dataset:** 12,238 facts covering **148 airports** across
+**8 countries**, **19 airlines** and **79 reporting
+periods** from 2001-FY to 2026-07, drawn from three publishers. Analytics over it
+produced 11,850 trend rows, 419 anomalies, 1,187 forecasts and 0
+written explanations.
 
-Citation validity is set at 100% deliberately. A single uncited number in an auditable analytics product is a defect, not a tuning parameter.
+Three criteria sit below target, and are reported rather than softened:
 
----
+- **Forecast MAPE is 16.4% against a 12% target.** These series are short
+  and volatile, and SARIMA ships only where it actually beats the
+  seasonal-naive baseline. Closing the gap needs more history or features
+  the published data does not carry.
+- **Alerts average 11.9 a month against a target of 5.** That counts all
+  three directions, and TOTAL largely mirrors DOMESTIC, so a reader sees
+  about 6.8 distinct entities. Still above target: the detector needs
+  further calibration, not a looser target.
+- **Anomaly precision is unmeasured.** It needs a hand-labelled set of
+  known cargo events, which has not been built. An estimate here would be
+  worth less than the honest gap.
 
 ## Deployment & Infrastructure
 
-- **Local development:** `docker compose up` brings up PostgreSQL, Redis, the API, the Prefect worker, and the web app. Ollama is optional and lets the full stack run with no external API calls.
-- **Containerisation:** multi-stage Dockerfiles — a Python image for API, agents, and worker; a Node image for the Next.js build.
-- **Environments:** `dev` (compose, sample data), `staging` (full pipeline, restricted sources), `prod` (scheduled ingestion, public dashboards).
-- **CI/CD:** GitHub Actions runs `ruff`, `mypy`, `pytest`, and `tsc` on every pull request; merges to `main` build and publish images.
-- **Migrations:** Alembic, applied on deploy and version-controlled under `db/migrations/`.
-- **Monitoring:** Prometheus scrapes agent-run duration, ingestion freshness, and query latency; Grafana dashboards and alerts on stale sources or failed runs.
-- **Scaling:** the warehouse is the bottleneck before the models are. Fact tables are partitioned by period, hot aggregates are materialised, and Redis caches dashboard queries. Agent runs are queued, so a slow forecast never blocks ingestion.
-- **Secrets:** supplied by environment only; nothing sensitive is committed — see `.env.example`. Credentials are also **redacted from logs and stored artefacts**: the OGD platform takes its key as a *query parameter*, so a request URL is not safe to record verbatim. `api-key`, `token` and friends are masked wherever a URL reaches a log line, the provenance ledger or an agent trace.
-
----
+- **Local run:** PostgreSQL plus a Python virtualenv. No containers - the
+  stack is one database and one process, and a container layer would add
+  a build step without removing a dependency.
+- **Migrations:** Alembic, version-controlled under `db/migrations/`, with
+  the views and the read-only role applied from `db/views.sql` and
+  `db/readonly_role.sql`.
+- **Scheduling:** `python -m services.scheduler` runs ingest, load,
+  analytics and insights in order. Runs cannot overlap: a lock file makes
+  a second run refuse, because two concurrent crawls is precisely how
+  this project got rate limited by a publisher.
+- **CI/CD:** GitHub Actions runs `ruff`, `mypy` and `pytest` against a
+  real Postgres on every push, applying the migrations, views and
+  read-only role first.
+- **Monitoring:** `/metrics` exposes fact counts, source staleness and
+  whether the last scheduled run succeeded. `/api/v1/pipeline/state`
+  returns the last run stage by stage.
+- **Security:** the serving path connects as `aci_readonly`, which holds
+  `SELECT` on six views and no rights at all on the tables beneath them.
+  A test fails if any module under `api/`, `semantic/` or `reporting/`
+  names a base table, because such a query works for the owner and fails
+  only in production.
+- **Secrets:** environment only, never committed. Credentials are also
+  redacted from logs, the provenance ledger and agent traces, since one
+  publisher takes its key as a query parameter and a URL is therefore
+  not safe to record.
 
 ## Project Structure
 
@@ -533,8 +555,7 @@ Air-Cargo-Intelligence/
 
 - Python 3.11+
 - Node.js 20+
-- Docker and Docker Compose
-- PostgreSQL 16 (or use the bundled compose service)
+- PostgreSQL 16, running locally
 
 ### Installation
 
@@ -695,35 +716,36 @@ from a failure actually observed against live data:
 
 ## Roadmap
 
-**Phase 1 · Foundation (current)**
-- [x] Requirements specification and system architecture
-- [x] Data model and provenance design
+**Phase 1 · Foundation — complete**
+- [x] Requirements specification, system architecture, provenance design
 - [x] Agent loop with pluggable heuristic / model policies
 - [x] Discovery, extraction and reconciliation agents with full run traces
-- [x] AAI freight parser (bilingual PDF) and Eurostat JSON-stat parser
-- [x] Airport crosswalk + curated alias overlay; 100% reconciliation
-- [x] Golden-fixture test suite (53 tests)
+- [x] AAI freight parser (bilingual PDF, three header layouts across 2023–2026)
+- [x] Eurostat JSON-stat parser and the data.gov.in catalogue client
+- [x] Archive recovery: months the publisher no longer links but still serves
+- [x] Airport crosswalk plus a curated alias overlay; 99.6% reconciliation
 - [x] PostgreSQL star schema, Alembic migrations, idempotent loader
-- [x] Trend, anomaly and forecast analytics with backtesting
-- [ ] DGCA discovery via rendered crawl (mostly covered through OGD)
 
-**Phase 2 · Intelligence**
-- [x] Trend, anomaly, and forecast agents with backtesting
-- [x] Semantic layer and metric registry
+**Phase 2 · Intelligence — complete**
+- [x] Trend, anomaly and forecast analytics with rolling-origin backtesting
+- [x] Insight agent: grounded explanations written against detected anomalies
+- [x] Semantic layer and metric registry; read-only serving role
 - [x] REST API with citations on every response
-- [x] Grounded natural-language querying
-- [x] Dashboard with rankings, carrier share and a chat panel
-- [x] Alert feed with severity and grain filters
-- [ ] Auto-generated periodic reports
+- [x] Grounded natural-language querying with a verification step
+- [x] Dashboard, alert feed and periodic briefs
+- [x] Scheduling, `/metrics`, and CI against a real Postgres
+- [x] Acceptance criteria measured rather than intended
 
-**Phase 3 · Scale**
-- [ ] Global cargo sources (IATA, Eurostat)
+**Phase 3 · Scale — open**
+- [ ] Close the three criteria still below target: forecast MAPE, alert volume,
+      and a labelled set so anomaly precision can be measured at all
+- [ ] More global sources (IATA, Eurostat beyond the eight airports held)
 - [ ] Route-level and lane-level intelligence
+- [ ] Commodity detail, which needs a source that publishes it —
+      see [the SRS](docs/SRS.md#82-warehouse-model) for why it is out of scope
 - [ ] Multi-modal expansion into maritime and rail freight
 
-See [open issues](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues) for the working list.
-
----
+See [open issues](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues).
 
 ## Contributing
 

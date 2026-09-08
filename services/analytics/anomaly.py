@@ -136,13 +136,25 @@ def detect_statistical(
 
 
 def detect_seasonal(
-    periods: list[str], values: list[float], period: int = 12, threshold: float = 3.0
+    periods: list[str], values: list[float], period: int = 12,
+    threshold: float = 4.5, min_kg: float = 100_000.0,
+    min_deviation_pct: float = 25.0,
 ) -> list[AnomalyPoint]:
     """Flag points whose STL residual is extreme.
 
     This is what stops a December peak from being reported every year:
     the seasonal component is removed first, so only departures from the
     expected seasonal shape are flagged.
+
+    The threshold is higher than the raw-series one on purpose. Residuals
+    are what is left after trend and season are removed, so their spread
+    is far narrower and the same z-score means something much weaker.
+    Reusing 3.0 here marked 1,670 points HIGH - more alerts than any feed
+    could be read.
+
+    The volume and deviation floors mirror the raw detector's, because a
+    residual spike worth two percent of a small airport's month is not
+    news whatever its z-score says.
     """
     from services.analytics.trend import seasonal_decompose
 
@@ -154,9 +166,14 @@ def detect_seasonal(
     z = robust_z_scores(list(resid))
     out: list[AnomalyPoint] = []
     for i, (p, v, zi) in enumerate(zip(periods, values, z, strict=True)):
-        if abs(zi) < threshold:
+        if abs(zi) < threshold or v < min_kg:
             continue
         expected = float(trend[i] + seasonal[i])
+        if expected <= 0:
+            continue
+        deviation = (v - expected) / expected * 100
+        if abs(deviation) < min_deviation_pct:
+            continue
         out.append(
             AnomalyPoint(
                 period=p, observed_kg=float(v), expected_kg=expected,
@@ -175,7 +192,9 @@ def detect(periods: list[str], values: list[float], threshold: float = 3.0) -> l
     promoted rather than reported twice - which also keeps the feed short.
     """
     stat = {a.period: a for a in detect_statistical(periods, values, threshold)}
-    seas = {a.period: a for a in detect_seasonal(periods, values, threshold=threshold)}
+    # The seasonal detector keeps its own, stricter threshold: residual
+    # z-scores are not on the same scale as raw ones.
+    seas = {a.period: a for a in detect_seasonal(periods, values)}
     merged: list[AnomalyPoint] = []
     for p in sorted(set(stat) | set(seas)):
         if p in stat and p in seas:

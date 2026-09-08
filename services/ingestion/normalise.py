@@ -129,6 +129,16 @@ def name_variants(name: str) -> list[str]:
     base = re.sub(r"\s*\(\s*", " (", base)
     base = re.sub(r"\s*\)", ")", base)
     variants = [base]
+
+    # Some releases cut the airport cell short, leaving the bracket open:
+    # "ADAMPUR (JALANDH", "HOLLONGI (DONYI P". The text before the bracket
+    # is still the airport, so it is worth trying rather than quarantining
+    # a row over a truncated label.
+    if base.count("(") > base.count(")"):
+        head = base.split("(", 1)[0].strip()
+        if head:
+            variants.append(head)
+
     m = re.match(r"^(.*?)\s*\(([^)]*)\)\s*$", base)
     if m:
         outer, inner = m.group(1).strip(), m.group(2).strip()
@@ -270,15 +280,27 @@ class AirportResolver:
         if not variants:
             return None, 0.0, "empty"
 
-        # Exact hits across every spelling first; only then fall to fuzzy.
+        # Order matters here. A curated alias is hand-verified; a bare
+        # three-letter string matching some airport's IATA code is a
+        # coincidence, and the two collide often enough to matter.
+        # "GOA" is Indian Goa in this data and Genoa's IATA code
+        # everywhere else, so checking the code first sent a whole
+        # airport's cargo to Italy.
         for i, name in enumerate(variants):
-            if len(name) == 3 and name in self._by_iata:
-                return self._by_iata[name], 1.0, "iata"
             if name in self._by_name:
                 rec = self._by_name[name]
                 if country_hint and (rec.get("country") or "").upper() != country_hint.upper():
                     return rec, 0.75, "exact-name-country-mismatch"
                 return rec, 1.0, "exact-name" if i == 0 else f"exact-variant:{name}"
+
+        # Only now try the bare code, and only when it does not contradict
+        # the country we were told to expect.
+        for name in variants:
+            if len(name) == 3 and name in self._by_iata:
+                rec = self._by_iata[name]
+                if country_hint and (rec.get("country") or "").upper() != country_hint.upper():
+                    continue
+                return rec, 1.0, "iata"
 
         name = variants[0]
         pool = list(self._by_name)

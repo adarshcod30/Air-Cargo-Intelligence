@@ -44,7 +44,9 @@ class TestServingRoleIsConfined:
         """A view runs with its owner's rights, so reading through the
         views needs no grant on what is underneath - and withholding that
         grant is what stops an escaped query seeing an unaudited row."""
-        with pytest.raises(Exception):
+        # The guarantee is that the read is refused. Which exception the
+        # driver raises for a permission error is its business, not ours.
+        with pytest.raises(Exception):  # noqa: B017
             ro_session.execute(text(f"SELECT count(*) FROM {table}"))
         ro_session.rollback()
 
@@ -57,7 +59,7 @@ class TestServingRoleIsConfined:
         "TRUNCATE anomaly",
     ])
     def test_cannot_write_anything(self, ro_session, statement):
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             ro_session.execute(text(statement))
         ro_session.rollback()
 

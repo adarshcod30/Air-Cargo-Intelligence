@@ -154,3 +154,42 @@ class TestTransitionEraAirports:
         spaced form, or the curated alias silently misses and the row
         falls back to the bare city."""
         assert name_variants("HYDERABAD(BEGUMPET)")[0] == "HYDERABAD (BEGUMPET)"
+
+
+class TestCuratedAliasOutranksBareCode:
+    """A hand-verified alias must beat a three-letter coincidence.
+
+    "GOA" is Indian Goa throughout this data and Genoa Cristoforo
+    Colombo's IATA code everywhere else. Checking the code first sent a
+    whole Indian airport's cargo to Italy, and it showed up in the alert
+    feed as an Italian airport with Indian traffic.
+    """
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def resolver(cls):
+        r = AirportResolver()
+        r.load()
+        return r
+
+    def test_goa_is_indian_not_genoa(self, resolver):
+        rec, conf, method = resolver.resolve("GOA", country_hint="India")
+        assert rec["iata"] == "GOI"
+        assert rec["country"] == "India"
+        assert method == "exact-name"
+
+    def test_the_two_goa_airports_stay_distinct(self, resolver):
+        old, _, _ = resolver.resolve("GOA", country_hint="India")
+        new, _, _ = resolver.resolve("GOA (MOPA)", country_hint="India")
+        assert old["iata"] == "GOI" and new["iata"] == "GOX"
+
+    @pytest.mark.parametrize("code", ["DEL", "BOM", "MAA", "BLR"])
+    def test_genuine_codes_still_resolve_by_code(self, resolver, code):
+        """The fix must not break the case the shortcut exists for."""
+        rec, conf, _ = resolver.resolve(code, country_hint="India")
+        assert rec is not None and rec["iata"] == code and conf >= 0.86
+
+    def test_a_code_from_the_wrong_country_is_not_used(self, resolver):
+        """A country hint of India must never return an Italian airport."""
+        rec, _, _ = resolver.resolve("GOA", country_hint="India")
+        assert (rec.get("country") or "").upper() == "INDIA"

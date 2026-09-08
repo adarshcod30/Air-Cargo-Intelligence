@@ -285,7 +285,16 @@ One-click monthly and quarterly briefs with charts embedded, generated from stor
 
 ### 8.2 Warehouse model
 
-Star schema at grain: **airport × period × direction × commodity × airline**.
+Star schema at grain: **airport × period × direction × airline × measure**.
+
+> **Commodity is out of scope, and this is a scope cut rather than an
+> omission.** No public source we could reach publishes cargo split by
+> commodity: DGCA and AAI report tonnage per airport, and the Open
+> Government Data aviation catalogue reports it per airline. Commodity
+> detail exists only in individual airport-operator releases, which would
+> need a separate scraper per operator for partial coverage. Leaving an
+> unbuildable requirement in a specification is worse than removing it,
+> so the claim is withdrawn until such a source is identified.
 
 Facts arrive at **two grains**, and each fact records which it is:
 
@@ -304,7 +313,6 @@ without forcing either into the other's shape.
 | `fact_cargo_movement` | Fact | Tonnage in kilograms, with a provenance reference |
 | `dim_airport` | Dimension | IATA, ICAO, name, city, state, international flag |
 | `dim_airline` | Dimension | Carrier identity and country |
-| `dim_commodity` | Dimension | Commodity family and HS-code mapping |
 | `dim_date` | Dimension | Calendar and Indian fiscal period attributes |
 | `source_document` | Provenance | Publisher, URL, checksum, publication date, raw object path |
 | `ingest_run` | Provenance | Run identity, status, and timing |
@@ -334,7 +342,7 @@ without forcing either into the other's shape.
 | NFR-7a | Security | Credentials are redacted from logs, the provenance ledger and agent traces. Query-string keys make a bare URL unsafe to record |
 | NFR-8 | Observability | Agent-run duration, source freshness, and query latency are exported as metrics |
 | NFR-9 | Maintainability | Every parser ships with a golden fixture test |
-| NFR-10 | Portability | The full stack runs locally via Docker Compose with no external API dependency |
+| NFR-10 | Portability | The full stack runs locally with PostgreSQL and a virtualenv, and needs no external API to function |
 
 ---
 
