@@ -182,11 +182,20 @@ class ToolCall:
     ok: bool
     observation: str
     elapsed_ms: int = 0
+    # Why the policy chose this call. Previously computed and discarded,
+    # which made a trace a log of *what* happened with no record of the
+    # judgement behind it - the part that actually needs auditing.
+    reasoning: str = ""
+    # Which policy produced this decision. Recorded per call, not per run,
+    # because an LLM policy that falls back mid-run would otherwise label
+    # heuristic decisions as model decisions.
+    policy: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["args"] = {k: redact(v) if isinstance(v, str) else v for k, v in self.args.items()}
         d["observation"] = redact(self.observation)
+        d["reasoning"] = redact(self.reasoning)
         return d
 
 

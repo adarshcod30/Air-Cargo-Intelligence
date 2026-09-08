@@ -18,6 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from services.api.agents_routes import router as agents_router
+from services.api.agents_routes import search_router
 from services.api.deps import get_session
 from services.api.schemas import (
     ChatRequest,
@@ -25,6 +27,7 @@ from services.api.schemas import (
     HealthResponse,
     QueryResponse,
 )
+from services.common.config import SETTINGS
 from services.common.logging import get_logger
 from services.semantic import registry
 from services.semantic.compiler import QueryRejected, QuerySpec
@@ -84,6 +87,10 @@ def _execute(session: Session, spec: QuerySpec) -> QueryResponse:
 
 
 # --------------------------------------------------------------- health --
+
+app.include_router(agents_router)
+app.include_router(search_router)
+
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["meta"])
 def health(session: Session = Depends(get_session)) -> HealthResponse:
@@ -365,4 +372,19 @@ def chat_query(
         result = answer(session, request.question)
     except QueryRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Retrieval runs after the answer, never before it, and cannot change a
+    # figure. Passages upgrade a citation from "this document" to "this
+    # paragraph"; the numbers stay the SQL layer's responsibility, which is
+    # what keeps the grounding check meaningful.
+    if SETTINGS.rag_enabled:
+        try:
+            from services.rag.retriever import search
+
+            hits = search(session, request.question, top_k=3)
+            result["passages"] = [p.to_dict() for p in hits.passages]
+            result["retrieval"] = {"backend": hits.backend, "embed_model": hits.model}
+        except Exception as exc:
+            log.warning(f"retrieval unavailable: {type(exc).__name__}: {exc}")
+
     return ChatResponse(**result)

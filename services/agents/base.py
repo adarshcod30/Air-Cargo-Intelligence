@@ -59,6 +59,10 @@ class Decision:
     tool: str | None            # None means "stop"
     args: dict[str, Any]
     reasoning: str = ""
+    # Set by the policy that actually decided. A fallback path must
+    # relabel this, otherwise the trace claims a model made a choice the
+    # deterministic rules made.
+    policy: str = ""
 
 
 class Policy(Protocol):
@@ -130,6 +134,8 @@ class Agent:
                         args=decision.args,
                         ok=False,
                         observation=f"no such tool; available: {sorted(self.tools)}",
+                        reasoning=decision.reasoning,
+                        policy=decision.policy or self.policy.name,
                     )
                 )
                 continue
@@ -143,7 +149,11 @@ class Agent:
                 ok, observation = False, f"{type(exc).__name__}: {exc}"
 
             elapsed = int((time.perf_counter() - t0) * 1000)
-            call = ToolCall(decision.tool, decision.args, ok, observation, elapsed)
+            call = ToolCall(
+                decision.tool, decision.args, ok, observation, elapsed,
+                reasoning=decision.reasoning,
+                policy=decision.policy or self.policy.name,
+            )
             run.record(call)
             marker = "ok " if ok else "ERR"
             log.info(f"[{self.name}] {step + 1}. {marker} {decision.tool} -> {redact(observation)[:96]}")

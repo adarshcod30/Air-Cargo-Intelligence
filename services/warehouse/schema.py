@@ -306,3 +306,132 @@ class Insight(Base):
     # Every numeric claim must resolve to a stored row.
     citations = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# --------------------------------------------------------------------------
+# Agent traces
+#
+# An agent whose reasoning is not persisted is indistinguishable from a loop
+# with extra steps: nothing it decided can be reviewed after the process
+# exits. These two tables make a run replayable and comparable - which is
+# what allows the policy A/B harness to ask whether a model actually chooses
+# better tools than the deterministic rules, rather than assuming it does.
+# --------------------------------------------------------------------------
+
+
+class AgentRunRow(Base):
+    __tablename__ = "agent_run"
+
+    agent_run_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    # Correlates the agents that took part in one pipeline invocation.
+    trace_id = Column(String(40), nullable=False, index=True)
+    agent = Column(String(40), nullable=False, index=True)
+    goal = Column(Text, nullable=False)
+    # The policy the agent was *configured* with. Which policy actually made
+    # each decision is recorded per step, because a model policy that falls
+    # back mid-run would otherwise be indistinguishable from one that did not.
+    policy = Column(String(80), nullable=False)
+    succeeded = Column(Boolean, nullable=False, default=False)
+    steps = Column(Integer, nullable=False, default=0)
+    result_summary = Column(Text, nullable=False, default="")
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True))
+    elapsed_ms = Column(Integer, nullable=False, default=0)
+    # Token spend, so the console can show budget burn next to step budget.
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    # How many decisions in this run fell back off the model.
+    fallback_steps = Column(Integer, nullable=False, default=0)
+
+    steps_rel = relationship(
+        "AgentStepRow", back_populates="run", cascade="all, delete-orphan",
+        order_by="AgentStepRow.seq",
+    )
+
+    __table_args__ = (
+        Index("ix_agent_run_started", "started_at"),
+        CheckConstraint("steps >= 0", name="steps_non_negative"),
+    )
+
+
+class AgentStepRow(Base):
+    __tablename__ = "agent_step"
+
+    agent_step_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    agent_run_id = Column(
+        BigInteger, ForeignKey("agent_run.agent_run_id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    seq = Column(Integer, nullable=False)
+    tool = Column(String(60), nullable=False)
+    args = Column(Text, nullable=False, default="{}")
+    ok = Column(Boolean, nullable=False, default=False)
+    observation = Column(Text, nullable=False, default="")
+    # The judgement behind the call. Without it a trace records what
+    # happened but not why, which is the half that needs auditing.
+    reasoning = Column(Text, nullable=False, default="")
+    # The policy that produced *this* decision, not the run's configuration.
+    policy = Column(String(80), nullable=False, default="")
+    elapsed_ms = Column(Integer, nullable=False, default=0)
+
+    run = relationship("AgentRunRow", back_populates="steps_rel")
+
+    __table_args__ = (
+        UniqueConstraint("agent_run_id", "seq", name="step_order"),
+        # Credentials must never reach the trace. The ingestion layer
+        # redacts them; this refuses to store one if redaction is ever
+        # bypassed, the same way fact_cargo_movement guards source_url.
+        CheckConstraint(
+            r"args !~* 'api[-_]?key\"?\s*[:=]\s*\"?(?!<redacted>)[A-Za-z0-9]{8}'",
+            name="no_credential_in_args",
+        ),
+    )
+
+
+class DocumentChunk(Base):
+    """A passage of a source document, embedded for retrieval.
+
+    This is what turns a citation from "this figure came from this PDF"
+    into "this figure came from this paragraph". The embedding column is
+    plain JSON text when pgvector is unavailable and a real vector column
+    when the extension is present - the migration upgrades it in place, so
+    a laptop without the extension still runs.
+    """
+
+    __tablename__ = "document_chunk"
+
+    chunk_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_document_id = Column(
+        BigInteger, ForeignKey("source_document.source_document_id"), nullable=False, index=True
+    )
+    seq = Column(Integer, nullable=False)
+    page = Column(Integer)
+    content = Column(Text, nullable=False)
+    token_estimate = Column(Integer, nullable=False, default=0)
+    embedding = Column(Text)
+    embed_model = Column(String(60))
+    # The open-data corpus repeats identical records across documents, so
+    # without a content hash the top-k is the same passage three times.
+    content_sha = Column(String(32), index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_document_id", "seq", name="chunk_order"),
+        CheckConstraint("length(content) > 0", name="chunk_not_empty"),
+    )
+
+
+class RagVocab(Base):
+    """Corpus-wide document frequencies for the offline embedder.
+
+    Inverse document frequency has to be computed over the whole corpus and
+    then applied identically at index time and at query time, so it cannot
+    live in the embedder's memory - the API process never sees the indexing
+    pass. Persisting it is what makes the two agree.
+    """
+
+    __tablename__ = "rag_vocab"
+
+    token = Column(String(64), primary_key=True)
+    document_frequency = Column(Integer, nullable=False)
+    total_documents = Column(Integer, nullable=False)

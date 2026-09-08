@@ -26,6 +26,7 @@ from services.common.models import AgentRun, CargoFact, SourceDocument
 from services.ingestion import registry as source_registry
 from services.ingestion.seed import build_airport_crosswalk
 from services.ingestion.store import RawStore
+from services.warehouse.traces import new_trace_id
 
 log = get_logger(__name__)
 
@@ -61,6 +62,10 @@ class Pipeline:
     def __init__(self) -> None:
         self.store = RawStore()
         self.report = PipelineReport()
+        # One id shared by every agent in this invocation, so the console
+        # can group a pipeline run rather than showing a flat list of
+        # unrelated agents.
+        self.trace_id = new_trace_id()
 
     # ------------------------------------------------------------------ #
 
@@ -231,8 +236,31 @@ class Pipeline:
         (out_dir / "pipeline_report.json").write_text(
             json.dumps(self.report.to_dict(), indent=2, default=str), encoding="utf-8"
         )
+        self._persist_traces()
         log.info(f"wrote {len(facts)} facts -> {facts_path}")
         return facts_path
+
+    def _persist_traces(self) -> None:
+        """Mirror the run traces into the warehouse.
+
+        The JSONL stays: it is the record of last resort when the database
+        is unreachable, and it is what the backfill reads. But a trace only
+        becomes usable - queryable, joinable, servable to the console - once
+        it is a row, so the database write is the one that matters and a
+        failure here is logged rather than allowed to lose an ingest.
+        """
+        if not self.report.runs:
+            return
+        try:
+            from sqlalchemy.orm import Session
+
+            from services.warehouse.loader import get_engine
+            from services.warehouse.traces import persist_runs
+
+            with Session(get_engine()) as session:
+                persist_runs(session, self.report.runs, self.trace_id)
+        except Exception as exc:
+            log.warning(f"could not persist traces to warehouse: {type(exc).__name__}: {exc}")
 
 
 def main() -> None:

@@ -6,7 +6,7 @@
 -- the schema could drop it. Two layers were designed and only one was
 -- built, so this is the second.
 --
--- The role can read the five allowlisted views and nothing else. It has
+-- The role can read the allowlisted views and nothing else. It has
 -- no rights on the base tables, so a query that escapes the compiler
 -- still cannot see an unaudited row, and no statement it issues can write.
 
@@ -29,6 +29,15 @@ GRANT SELECT ON v_trend      TO aci_readonly;
 GRANT SELECT ON v_anomaly    TO aci_readonly;
 GRANT SELECT ON v_forecast   TO aci_readonly;
 GRANT SELECT ON v_source     TO aci_readonly;
+GRANT SELECT ON v_insight    TO aci_readonly;
+
+-- Agent traces. Read-only like everything else: the console displays what
+-- the agents decided, it never edits a trace.
+GRANT SELECT ON v_agent_run        TO aci_readonly;
+GRANT SELECT ON v_agent_step       TO aci_readonly;
+GRANT SELECT ON v_agent_tool_stats TO aci_readonly;
+GRANT SELECT ON v_document_chunk   TO aci_readonly;
+GRANT SELECT ON v_rag_vocab        TO aci_readonly;
 
 -- A view runs with its owner's rights, so reading through them does not
 -- require any grant on the tables underneath. Future tables must not be

@@ -46,6 +46,16 @@ class ChatResponse(BaseModel):
     grounded: bool = Field(
         description="True when every figure in the answer came from a stored row."
     )
+    passages: list[dict[str, Any]] = Field(
+        default=[],
+        description=(
+            "Source paragraphs retrieved for the question. Context and "
+            "provenance only - no figure in the answer comes from them."
+        ),
+    )
+    retrieval: dict[str, Any] | None = Field(
+        default=None, description="Which retriever and embedding model served the passages."
+    )
 
 
 class HealthResponse(BaseModel):
