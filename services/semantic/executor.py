@@ -56,11 +56,14 @@ class QueryResult:
         }
 
 
+# Reads v_source, not source_document. The serving role has no rights on
+# the base tables, and an endpoint reaching past the views is exactly the
+# kind of thing that should fail here rather than in production.
 _CITATION_SQL = text("""
     SELECT DISTINCT
         sd.source_document_id, sd.publisher, sd.title,
         sd.source_url, sd.retrieved_at
-    FROM source_document sd
+    FROM v_source sd
     WHERE sd.source_document_id IN (
         SELECT DISTINCT source_document_id FROM v_cargo_fact
         WHERE (CAST(:grain AS text) IS NULL OR grain = CAST(:grain AS text))

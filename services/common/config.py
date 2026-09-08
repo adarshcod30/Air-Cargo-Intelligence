@@ -31,6 +31,7 @@ class Settings:
     llm_api_key: str | None
     llm_model: str | None
 
+    database_url_readonly: str | None
     data_gov_in_api_key: str | None
     agent_max_steps: int
     extraction_confidence_floor: float
@@ -62,6 +63,11 @@ def load_settings() -> Settings:
         llm_base_url=os.getenv("LLM_BASE_URL") or None,
         llm_api_key=os.getenv("LLM_API_KEY") or None,
         llm_model=os.getenv("LLM_MODEL") or None,
+        # The serving path connects as a role that can read the
+        # allowlisted views and nothing else. Falls back to the owner
+        # connection so a fresh checkout still runs, but the fallback is
+        # logged as a warning rather than passing silently.
+        database_url_readonly=os.getenv("DATABASE_URL_READONLY") or None,
         data_gov_in_api_key=os.getenv("DATA_GOV_IN_API_KEY") or None,
         agent_max_steps=int(os.getenv("ACI_AGENT_MAX_STEPS", "12")),
         extraction_confidence_floor=float(os.getenv("ACI_CONFIDENCE_FLOOR", "0.60")),

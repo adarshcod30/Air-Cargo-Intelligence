@@ -87,12 +87,18 @@ def _execute(session: Session, spec: QuerySpec) -> QueryResponse:
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["meta"])
 def health(session: Session = Depends(get_session)) -> HealthResponse:
+    # Counted through the views, not the base tables. The serving role
+    # has no rights on those, which is the point - and this endpoint
+    # asking for them is exactly how that would be discovered in
+    # production rather than here.
     counts = session.execute(text("""
         SELECT
-          (SELECT count(*) FROM fact_cargo_movement),
-          (SELECT count(*) FROM dim_airport),
-          (SELECT count(*) FROM dim_airline),
-          (SELECT count(*) FROM dim_period)
+          (SELECT count(*) FROM v_cargo_fact),
+          (SELECT count(DISTINCT COALESCE(airport_iata, airport_name))
+             FROM v_cargo_fact WHERE grain = 'AIRPORT'),
+          (SELECT count(DISTINCT airline_name)
+             FROM v_cargo_fact WHERE grain = 'AIRLINE'),
+          (SELECT count(DISTINCT period) FROM v_cargo_fact)
     """)).one()
     return HealthResponse(
         status="ok", database="connected",

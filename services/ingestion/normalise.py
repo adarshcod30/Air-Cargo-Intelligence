@@ -122,6 +122,12 @@ def name_variants(name: str) -> list[str]:
     base = strip_non_latin(name).upper().strip()
     if not base:
         return []
+    # Older releases write "HYDERABAD(BEGUMPET)" where newer ones write
+    # "HYDERABAD (BEGUMPET)". Without normalising the space the curated
+    # alias misses and the row falls back to the bare city name, which
+    # merges two genuinely different airports onto one code.
+    base = re.sub(r"\s*\(\s*", " (", base)
+    base = re.sub(r"\s*\)", ")", base)
     variants = [base]
     m = re.match(r"^(.*?)\s*\(([^)]*)\)\s*$", base)
     if m:

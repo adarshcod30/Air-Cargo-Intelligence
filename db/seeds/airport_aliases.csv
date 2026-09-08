@@ -51,3 +51,6 @@ GOA (DABOLIM),GOI,VOGO,Goa International Airport,Dabolim,India,verified,renamed 
 GOA (MOPA),GOX,VOGA,Manohar International Airport,Mopa,India,verified,separate airport opened 2022
 KANPUR (CHAKERI),KNU,VIKA,Kanpur Airport,Kanpur,India,verified,Chakeri
 KANPUR (CIVIL),,VIKN,Kanpur Civil Airport,Kanpur,India,verified,separate airfield; no IATA
+RAJKOT (HIRASAR),HSR,VAHS,Rajkot International Airport,Hirasar,India,verified,opened 2023; distinct from the old Rajkot airport RAJ
+BANGALORE (BIAL),BLR,VOBL,Kempegowda International Airport,Bengaluru,India,verified,older releases spell the city Bangalore
+BANGALORE (HAL),,VOBG,HAL Airport,Bengaluru,India,verified,older spelling; separate airport with no commercial IATA

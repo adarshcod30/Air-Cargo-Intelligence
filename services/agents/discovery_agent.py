@@ -74,6 +74,51 @@ class DiscoveryAgent(Agent):
             self.context["last_pattern"] = pattern
             return len(matched)
 
+        @self.tool(
+            "probe_archive",
+            "Try constructed URLs for months the index no longer links.",
+            months="how many months back to probe",
+        )
+        def probe_archive(months: int = 24) -> int:
+            """Recover the history the index has dropped.
+
+            The publisher lists only recent files but keeps older ones
+            served, so the archive is reachable by constructing its URLs
+            and checking which actually return a document. Content type
+            decides that, not the status code - this server answers 200
+            with an HTML error page for a file that does not exist.
+            """
+            template = self.source.archive_template
+            if not template:
+                return 0
+            from datetime import date
+
+            known = {u for u in self.context.get("all_links", [])}
+            candidates: list[str] = []
+            today = date.today()
+            for back in range(1, int(months) + 1):
+                total = today.year * 12 + (today.month - 1) - back
+                y, m = divmod(total, 12)
+                url = template.format(
+                    mon=_MON_ABBR[m + 1], month=_MON_NAME[m + 1],
+                    yy=f"{y % 100:02d}", yyyy=str(y),
+                )
+                if url not in known:
+                    candidates.append(url)
+
+            found: list[str] = []
+            for url in candidates:
+                res = fetch(url)
+                # A PDF is a PDF because its bytes say so.
+                if res.ok and res.media_type == "application/pdf":
+                    found.append(url)
+            self.context["archive_links"] = found
+            self.context["matched"] = sorted(
+                set(self.context.get("matched", [])) | set(found)
+            )
+            log.info(f"archive probe: {len(found)}/{len(candidates)} months recovered")
+            return len(found)
+
         @self.tool("register_documents", "Turn matched links into SourceDocuments.")
         def register_documents() -> int:
             docs = [
@@ -105,6 +150,16 @@ class DiscoveryAgent(Agent):
         # Reflection: did the current pattern actually find anything?
         attempts = [c for c in history if c.tool == "filter_links"]
         if context.get("matched"):
+            # The index lists only recent files. If the source declares an
+            # archive pattern, the months it has dropped are worth probing
+            # before settling for what is linked.
+            if self.source.archive_template and "probe_archive" not in done:
+                return Decision(
+                    "probe_archive",
+                    {"months": self.source.archive_months_back or 24},
+                    f"index yielded {len(context['matched'])} document(s); "
+                    "probing the archive for months it no longer links",
+                )
             if "register_documents" not in done:
                 return Decision("register_documents", {}, "matches found; register them")
             return Decision(None, {}, "documents registered")
@@ -137,6 +192,13 @@ _PERIOD_RX = re.compile(
 
 _MON = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
         "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+_MON_ABBR = {v: k.capitalize() for k, v in _MON.items()}
+_MON_NAME = {
+    1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+    7: "July", 8: "August", 9: "September", 10: "October", 11: "November",
+    12: "December",
+}
 
 
 def _guess_period(url: str) -> str | None:

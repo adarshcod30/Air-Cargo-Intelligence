@@ -114,3 +114,43 @@ class TestAirportResolution:
         _, confidence, method = resolver.resolve("ZZQQXX AIRPORT", country_hint="India")
         assert confidence < 0.86
         assert method == "unresolved"
+
+
+class TestTransitionEraAirports:
+    """A three-year backfill surfaces airport transitions that seven
+    months of recent data never shows."""
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def resolver(cls):
+        r = AirportResolver()
+        r.load()
+        return r
+
+    def test_rajkot_old_and_new_stay_distinct(self, resolver):
+        """Both airports reported during the changeover, so merging them
+        onto RAJ double-counts the city for the whole overlap."""
+        old, _, _ = resolver.resolve("RAJKOT", country_hint="India")
+        new, _, _ = resolver.resolve("RAJKOT (HIRASAR)", country_hint="India")
+        assert old["iata"] == "RAJ"
+        assert new["iata"] == "HSR"
+
+    @pytest.mark.parametrize("written,expected", [
+        # Releases before the city was renamed.
+        ("BANGALORE (BIAL)", "BLR"),
+        ("BENGALURU (BIAL)", "BLR"),
+        # Older files omit the space before the bracket.
+        ("HYDERABAD(BEGUMPET)", "BPM"),
+        ("HYDERABAD (BEGUMPET)", "BPM"),
+        ("KANPUR(Chakeri)", "KNU"),
+    ])
+    def test_older_spellings_resolve_the_same(self, resolver, written, expected):
+        rec, conf, _ = resolver.resolve(written, country_hint="India")
+        assert rec is not None and rec["iata"] == expected
+        assert conf >= 0.86
+
+    def test_bracket_spacing_is_normalised(self):
+        """'HYDERABAD(BEGUMPET)' must produce the same variants as the
+        spaced form, or the curated alias silently misses and the row
+        falls back to the bare city."""
+        assert name_variants("HYDERABAD(BEGUMPET)")[0] == "HYDERABAD (BEGUMPET)"

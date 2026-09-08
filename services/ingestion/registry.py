@@ -28,6 +28,10 @@ class Source:
     status: SourceStatus
     index_url: str | None = None
     link_patterns: list[str] = field(default_factory=list)
+    # Template for constructing URLs for periods the index no longer
+    # links. Placeholders: {mon} {month} {yy} {yyyy}.
+    archive_template: str | None = None
+    archive_months_back: int = 0
     api_template: str | None = None
     # Cartesian product of these fills api_template, one document per combo.
     api_params: dict[str, list[str]] = field(default_factory=dict)
@@ -43,6 +47,16 @@ REGISTRY: list[Source] = [
         index_url="https://www.aai.aero/en/business-opportunities/aai-traffic-news",
         # Both spellings on purpose: AAI ships 'Anex5' alongside 'Annex4'.
         link_patterns=[r"an+ex\s*4", r"an+ex4"],
+        # The traffic-news page lists only the most recent months, but the
+        # files themselves stay on the server: Jan 2023 is still fetchable
+        # long after the page stopped linking it. Without this the whole
+        # archive is invisible and every airport series is ~7 points long,
+        # too short to decompose seasonally or to forecast.
+        archive_template=(
+            "https://www.aai.aero/sites/default/files/traffic-news/"
+            "{mon}2k{yy}Annex4.pdf"
+        ),
+        archive_months_back=44,
         notes="Annexure IV-A international, IV-B domestic, IV-C total. Values in MT.",
     ),
     Source(

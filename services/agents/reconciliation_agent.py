@@ -92,10 +92,14 @@ class ReconciliationAgent(Agent):
             city and attributes a general aviation field's tonnage to the
             main cargo hub.
 
-            Curated aliases fix the four cases we know about; this catches
-            the ones we do not. Comparison is scoped to a single period and
-            direction, so a source renaming a row between months (bare
-            'GOA' becoming 'GOA (DABOLIM)') is correctly not a collision.
+            The comparison is scoped to a single SOURCE DOCUMENT, because
+            that is what separates the two cases. A publisher lists each
+            airport once per release, so two names on one code inside one
+            document really is a merge error. Across documents it is
+            almost always spelling drift over time: releases from 2023 say
+            'BANGALORE (BIAL)' where 2026 says 'BENGALURU (BIAL)', and
+            both are correctly BLR. Comparing across documents flagged 37%
+            of a three-year backfill as collisions.
             """
             facts: list[CargoFact] = self.context["facts"]
             groups: dict[tuple, set[str]] = {}
@@ -103,7 +107,8 @@ class ReconciliationAgent(Agent):
                 if not f.airport_iata or f.grain is not Grain.AIRPORT:
                     continue
                 groups.setdefault(
-                    (f.airport_iata, f.period, f.direction), set()
+                    (f.airport_iata, f.period, f.direction, f.source_document_id),
+                    set(),
                 ).add(f.airport_name_raw)
 
             # Two different names on one code (BENGALURU BIAL vs HAL).
@@ -118,13 +123,13 @@ class ReconciliationAgent(Agent):
             for f in facts:
                 if not f.airport_iata or f.grain is not Grain.AIRPORT:
                     continue
-                k = (f.airport_iata, f.period, f.direction)
+                k = (f.airport_iata, f.period, f.direction, f.source_document_id)
                 seen[k] = seen.get(k, 0) + 1
             for k, n in seen.items():
                 if n > 1 and k not in collided:
                     collided[k] = {f"duplicated x{n}"}
             for f in facts:
-                key = (f.airport_iata, f.period, f.direction)
+                key = (f.airport_iata, f.period, f.direction, f.source_document_id)
                 if key in collided:
                     # Refuse rather than pick one arbitrarily.
                     f.resolution_confidence = 0.0
@@ -132,8 +137,9 @@ class ReconciliationAgent(Agent):
                         f"collision:{sorted(collided[key])}"
                     )
             self.context["collisions"] = {
-                f"{k[0]}|{k[1]}|{k[2].value if hasattr(k[2], 'value') else k[2]}":
-                sorted(v) for k, v in collided.items()
+                f"{k[0]}|{k[1]}|{k[2].value if hasattr(k[2], 'value') else k[2]}"
+                f"|doc:{k[3]}": sorted(v)
+                for k, v in collided.items()
             }
             if collided:
                 log.warning(f"{len(collided)} airport-code collision(s) detected")

@@ -347,8 +347,11 @@ def _find_airport_code(session: Session, question: str) -> str | None:
     if not candidates:
         candidates = [w for w in re.findall(r"\b[A-Za-z]{3}\b", question)]
     for code in candidates:
+        # Checked through the view: the serving role has no rights on the
+        # dimension table, so reading it directly works for the owner and
+        # 500s in production.
         hit = session.execute(
-            text("SELECT 1 FROM dim_airport WHERE iata_code = :c LIMIT 1"),
+            text("SELECT 1 FROM v_cargo_fact WHERE airport_iata = :c LIMIT 1"),
             {"c": code.upper()},
         ).first()
         if hit:
