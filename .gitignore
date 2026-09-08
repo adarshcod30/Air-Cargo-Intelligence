@@ -41,3 +41,6 @@ models/*.joblib
 Thumbs.db
 .idea/
 .vscode/
+
+# Alembic local state
+db/migrations/__pycache__/

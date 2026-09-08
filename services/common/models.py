@@ -129,6 +129,9 @@ class CargoFact:
     # double-counts the whole market, so they are labelled, not dropped -
     # the totals are useful on their own.
     is_aggregate: bool = False
+    # Names the series, so two different measurements of the same entity
+    # in the same period do not collapse onto one another.
+    measure: str = "freight"
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

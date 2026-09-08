@@ -38,6 +38,16 @@ log = get_logger(__name__)
 _AIRPORT_HINTS = ("airport", "aerodrome", "station", "airports")
 _TONNAGE_HINTS = ("freight", "cargo", "tonnage", "tonnes", "tonne", "quantity", "weight")
 _PERIOD_HINTS = ("year", "month", "period", "date", "quarter", "fy")
+# Checked in order, and the combined patterns MUST come first. A title
+# reading "Scheduled (International+Domestic) Services" contains the word
+# "international", so testing single tokens first files a combined series
+# as international-only - a wrong number, and one that then collides with
+# the genuinely international series for the same carrier.
+_COMBINED_RX = re.compile(
+    r"international\s*[+&/]\s*domestic|domestic\s*[+&/]\s*international|"
+    r"int'?l\s*[+&/]\s*dom|\btotal\b",
+    re.I,
+)
 _DIRECTION_HINTS = {
     "international": Direction.INTERNATIONAL,
     "domestic": Direction.DOMESTIC,
@@ -171,6 +181,12 @@ class DataGovInParser:
             result.warnings.append(f"cannot identify the airline from title: {title[:80]!r}")
             return result
 
+        # One carrier can have several genuinely different series in the
+        # same period and direction - "all international scheduled
+        # services" is not "international traffic to and from India".
+        # Without a discriminator the natural key treats them as one row
+        # and the later load silently overwrites the earlier.
+        measure = _measure_slug(title, tonnage_col)
         unit = infer_unit(tonnage_col)
         direction = self._infer_direction(data.get("title", ""), tonnage_col)
         default_period = self._infer_period(data.get("title", ""))
@@ -194,6 +210,7 @@ class DataGovInParser:
                         country="India",
                         grain=Grain.AIRLINE,
                         airline=airline,
+                        measure=measure,
                         is_aggregate=bool(_AGGREGATE_AIRLINE.match(airline or "")),
                         resolution_confidence=1.0,
                         resolution_method="airline-from-title",
@@ -254,9 +271,12 @@ class DataGovInParser:
 
     @staticmethod
     def _infer_direction(title: str, column: str) -> Direction:
-        blob = f"{title} {column}".lower()
+        blob = f"{title} {column}"
+        if _COMBINED_RX.search(blob):
+            return Direction.TOTAL
+        lowered = blob.lower()
         for token, direction in _DIRECTION_HINTS.items():
-            if token in blob:
+            if token in lowered:
                 return direction
         return Direction.TOTAL
 
@@ -325,3 +345,18 @@ def _airline_from_title(title: str) -> str | None:
     if _CLAUSE_WORDS.search(name):
         return None
     return name
+
+
+def _measure_slug(title: str, column: str) -> str:
+    """A short, stable name for what a dataset measures.
+
+    Built from the title with the carrier-agnostic parts kept and the
+    years stripped, so the same series across two files slugs the same
+    way while two different series stay distinct.
+    """
+    base = re.sub(r"\b(19|20)\d{2}(-\d{2,4})?\b", "", title or "")
+    base = re.sub(r"\b(from|to|during|of|the|on|and|for|details|statistics)\b", " ", base, flags=re.I)
+    base = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+    if not base:
+        base = re.sub(r"[^a-z0-9]+", "-", (column or "measure").lower()).strip("-")
+    return base[:60] or "measure"
