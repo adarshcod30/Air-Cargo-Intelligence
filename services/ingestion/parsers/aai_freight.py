@@ -43,10 +43,20 @@ from services.ingestion.normalise import (
 
 log = get_logger(__name__)
 
+# Section headings are not worded consistently across releases. Newer
+# files say "Total Freight(Domestic+International)"; older ones say
+# "TOTAL(INTL DOM) FREIGHT", where the qualifier sits BETWEEN the two
+# words. A rigid "total\s+freight" misses that, the TOTAL section then
+# inherits DOMESTIC from the page before it, and every domestic airport
+# is duplicated - 1,590 rows quarantined as collisions that were really
+# a section-detection failure.
+#
+# TOTAL is tested first because its heading contains the component words.
 _SECTION_MARKERS = [
-    (re.compile(r"international\s+freight", re.I), Direction.INTERNATIONAL),
-    (re.compile(r"domestic\s+freight", re.I), Direction.DOMESTIC),
-    (re.compile(r"total\s+freight", re.I), Direction.TOTAL),
+    (re.compile(r"\btotal\b.{0,24}\bfreight\b|\bfreight\b.{0,24}\btotal\b", re.I),
+     Direction.TOTAL),
+    (re.compile(r"\bdomestic\b.{0,16}\bfreight\b", re.I), Direction.DOMESTIC),
+    (re.compile(r"\binternational\b.{0,16}\bfreight\b", re.I), Direction.INTERNATIONAL),
 ]
 
 # Rows that look like data but are structure.
@@ -62,10 +72,25 @@ _NOISE = re.compile(
 #   line 9:  '2026 2025 2025-2026 2024-2025'
 # So they are matched separately, and the year must be standalone rather
 # than part of a fiscal range like '2025-2026'.
+# Releases before ~2024 abbreviate the month - the header reads
+#   JAN JAN % ... APR to JAN %
+#   2023 2022 Change 2022-23 2021-22
+# rather than spelling "January" out. Matching only full names left every
+# row in those files on period "unknown", which then collapsed whole
+# sections onto one key and quarantined them as collisions.
 _MONTH_RX = re.compile(
-    r"\b(January|February|March|April|May|June|July|August|September|October|"
-    r"November|December)\b", re.I)
+    r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\b", re.I)
 _STANDALONE_YEAR_RX = re.compile(r"(?<![\d-])(20\d{2})(?![\d-])")
+
+# Once the Devanagari is stripped and the gaps closed, the month sits
+# inside a run like "AIRPORTSEPSEPAPRtoSEP" with no word boundary to
+# anchor on, so the compact pass matches without one.
+_MONTH_COMPACT_RX = re.compile(
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)", re.I)
 
 
 class AAIFreightParser:
@@ -155,8 +180,17 @@ class AAIFreightParser:
         this layout are the reporting month and its year respectively.
         """
         header = text[:1600]
-        month = _MONTH_RX.search(header)
         year = _STANDALONE_YEAR_RX.search(header)
+        month = _MONTH_RX.search(header)
+
+        if month is None:
+            # Some releases interleave the Hindi and English runs, so the
+            # header extracts as "सि S त E बं P र" - the letters of SEP
+            # scattered between Devanagari glyphs. Dropping the Devanagari
+            # and closing the gaps puts the month back together.
+            compact = re.sub(r"\s+", "", strip_non_latin(header))
+            month = _MONTH_COMPACT_RX.search(compact)
+
         if not (month and year):
             return None
         try:

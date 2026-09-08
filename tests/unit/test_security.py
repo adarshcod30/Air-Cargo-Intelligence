@@ -71,13 +71,19 @@ class TestNoEndpointReachesPastTheViews:
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[2]
+        # Every base table, not a convenient subset: `insight` was
+        # missing from this list and two endpoints reached straight past
+        # the views, working for the owner and 500-ing for the serving
+        # role.
         base_tables = (
             "fact_cargo_movement", "dim_airport", "dim_airline", "dim_period",
-            "source_document", "ingest_run",
+            "source_document", "ingest_run", "insight", "trend", "anomaly",
+            "forecast",
         )
         offenders = []
-        for path in list((root / "services/api").glob("*.py")) + \
-                    list((root / "services/semantic").glob("*.py")):
+        for path in (list((root / "services/api").glob("*.py"))
+                     + list((root / "services/semantic").glob("*.py"))
+                     + list((root / "services/reporting").glob("*.py"))):
             src = path.read_text()
             for table in base_tables:
                 if re.search(rf"\bFROM\s+{table}\b", src, re.I):

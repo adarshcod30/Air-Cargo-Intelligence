@@ -39,6 +39,7 @@ class PipelineReport:
     facts_reconciled: int = 0
     facts_quarantined: int = 0
     review_queue: list[str] = field(default_factory=list)
+    collisions: dict = field(default_factory=dict)
     runs: list[AgentRun] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -50,6 +51,8 @@ class PipelineReport:
             "facts_reconciled": self.facts_reconciled,
             "facts_quarantined": self.facts_quarantined,
             "review_queue": self.review_queue[:50],
+            "collisions": dict(list(self.collisions.items())[:40]),
+            "collision_count": len(self.collisions),
             "agent_runs": [r.to_dict() for r in self.runs],
         }
 
@@ -204,6 +207,10 @@ class Pipeline:
         self.report.facts_reconciled = len(accepted)
         self.report.facts_quarantined = len(agent.context.get("quarantined", []))
         self.report.review_queue = agent.context.get("review_queue", [])
+        # Collisions are the main reason a fact gets quarantined, so the
+        # detail belongs in the report rather than being re-derived by
+        # hand every time the number looks wrong.
+        self.report.collisions = agent.context.get("collisions", {})
         log.info(f"reconciliation: {run.result_summary}")
         return accepted
 

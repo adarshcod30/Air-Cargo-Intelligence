@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+
+    # The suite covers the warehouse, the semantic layer and the
+    # read-only role, so it needs a real Postgres. Tests that need one
+    # skip themselves when DATABASE_URL is absent, which keeps a bare
+    # checkout runnable, but CI should exercise them rather than skip.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cargo
+          POSTGRES_PASSWORD: cargo
+          POSTGRES_DB: air_cargo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cargo"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql+psycopg://cargo:cargo@localhost:5432/air_cargo
+      PGPASSWORD: cargo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check services tests
+
+      - name: Type-check
+        # Not yet clean across the whole tree, so failures are reported
+        # without blocking. Drop the flag once the backlog is cleared;
+        # leaving it silent would let the backlog grow instead.
+        run: mypy services || true
+        continue-on-error: true
+
+      - name: Apply migrations and views
+        run: |
+          alembic upgrade head
+          psql -h localhost -U cargo -d air_cargo -f db/views.sql
+          psql -h localhost -U cargo -d air_cargo -f db/readonly_role.sql
+
+      - name: Test
+        env:
+          DATABASE_URL_READONLY: postgresql+psycopg://aci_readonly@localhost:5432/air_cargo
+        run: pytest -q --cov=services --cov-report=term-missing
+
+      - name: Parser fixtures must still parse
+        # The tripwire for a publisher reshaping its PDFs. It is worth
+        # calling out separately: this is the failure most likely to be
+        # mistaken for a data problem rather than a code one.
+        run: pytest tests/unit/test_parsers.py -q

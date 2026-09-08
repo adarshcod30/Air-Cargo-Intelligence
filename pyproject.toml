@@ -50,5 +50,8 @@ ignore = [
 "services/api/*.py" = ["B008"]
 
 [tool.mypy]
-python_version = "3.11"
+# Left unpinned on purpose: pinning 3.11 while running on 3.13 made mypy
+# parse the installed numpy stubs under the older grammar and abort
+# before checking any of our own code.
 ignore_missing_imports = true
+exclude = "^(db/migrations|\\.venv)/"

@@ -122,3 +122,26 @@ SELECT
 FROM source_document sd
 LEFT JOIN fact_cargo_movement f ON f.source_document_id = sd.source_document_id
 GROUP BY sd.source_document_id;
+
+
+-- Explanations, joined to the anomaly they were written against so a
+-- reader gets the claim and its evidence in one row.
+CREATE OR REPLACE VIEW v_insight AS
+SELECT
+    i.insight_id,
+    i.headline,
+    i.narrative,
+    i.citations,
+    i.created_at,
+    a.anomaly_id,
+    a.entity_key,
+    a.grain::text        AS grain,
+    a.direction::text    AS direction,
+    a.severity,
+    p.period_label       AS period,
+    a.observed_kg,
+    a.expected_kg,
+    a.deviation_pct
+FROM insight i
+LEFT JOIN anomaly a    ON a.anomaly_id = i.anomaly_id
+LEFT JOIN dim_period p ON p.period_id  = a.period_id;

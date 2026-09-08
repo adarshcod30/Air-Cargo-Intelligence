@@ -1,0 +1,39 @@
+name: Scheduled ingest
+
+# SRS NFR-3: new data reflected within 24 hours of publication.
+#
+# Runs once a day rather than hourly: these publishers release monthly,
+# and the sources rate-limit. Crawling them more often would add load
+# without adding freshness.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # A second run must not start while one is in flight. Two concurrent
+    # crawls is exactly how this project got rate limited.
+    concurrency:
+      group: scheduled-ingest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Run the pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATA_GOV_IN_API_KEY: ${{ secrets.DATA_GOV_IN_API_KEY }}
+        run: python -m services.scheduler
+      - name: Publish the run state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-state
+          path: data/processed/pipeline_state.json
+          if-no-files-found: ignore

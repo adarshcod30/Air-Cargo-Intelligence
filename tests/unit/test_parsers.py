@@ -81,3 +81,92 @@ class TestParserRefusesGarbage:
         assert result.facts == []
         assert result.confidence == 0.0
         assert result.warnings
+
+
+class TestOlderReleaseLayouts:
+    """A three-year backfill spans several header layouts.
+
+    Reading the period wrong is not a cosmetic failure: every row in the
+    file lands on period "unknown", whole sections then collapse onto one
+    key, and the reconciler quarantines them as collisions. That is how
+    a parsing bug shows up as a data-quality one.
+    """
+
+    @staticmethod
+    def _detect(text):
+        return AAIFreightParser._detect_period(text)
+
+    def test_abbreviated_month_is_read(self):
+        """Releases before ~2024 write JAN, not January."""
+        header = ("SL. NO. AIRPORT JAN JAN % APR to JAN %\n"
+                  "2023 2022 Change 2022-23 2021-22 Change")
+        assert self._detect(header) == "2023-01"
+
+    def test_full_month_still_read(self):
+        header = ("Airport February February % April to February %\n"
+                  "2026 2025 Change 2026-2027 2025-2026")
+        assert self._detect(header) == "2026-02"
+
+    def test_month_interleaved_with_devanagari(self):
+        """Some releases interleave the Hindi and English text runs, so
+        the header extracts as 'सि S त E बं P र' - the letters of SEP
+        scattered between Devanagari glyphs."""
+        header = ("SL. NO. AIRPORT सि S त E बं P र सि S त E बं P र % "
+                  "अ A प्र P ैल R ि t े o सि S त E बं P र %\n2023 2022 Change")
+        assert self._detect(header) == "2023-09"
+
+    def test_month_without_a_word_boundary(self):
+        """Once the gaps close the month sits inside a run like
+        'AIRPORTSEPSEPAPRtoSEP', where \\b cannot anchor.
+
+        Both months are interleaved in the real files, which is why the
+        compact pass has to find the first one rather than the normal
+        pass finding a conveniently spaced later one.
+        """
+        header = ("SL. NO. AIRPORT सि S त E बं P र सि S त E बं P र % "
+                  "अ A प्र P ैल R ि t े o सि S त E बं P र %\n2024 2023 Change")
+        assert self._detect(header) == "2024-09"
+
+    def test_a_header_with_no_month_is_refused(self):
+        """Guessing would misdate every row in the file."""
+        assert self._detect("AIRPORT TOTAL 2023 2022 Change") is None
+
+    def test_a_header_with_no_year_is_refused(self):
+        assert self._detect("AIRPORT JAN JAN % Change") is None
+
+
+class TestSectionHeadingVariants:
+    """Section wording drifts across releases, and getting it wrong is
+    not cosmetic: an undetected heading makes the section inherit the
+    previous one, duplicating every airport in it. That surfaced as 1,590
+    reconciliation collisions which were really a parsing failure."""
+
+    @staticmethod
+    def _match(line):
+        from services.ingestion.parsers.aai_freight import _SECTION_MARKERS
+        for pattern, direction in _SECTION_MARKERS:
+            if pattern.search(line):
+                return direction
+        return None
+
+    @pytest.mark.parametrize("heading,expected", [
+        # Newer wording.
+        ("Total Freight(Domestic+International)", "TOTAL"),
+        ("घिेलू माल Domestic Freight", "DOMESTIC"),
+        ("अंर्िातष्ट्रीय माल International Freight", "INTERNATIONAL"),
+        # Older wording puts the qualifier BETWEEN the two words.
+        ("( ) TOTAL(INTL DOM) FREIGHT", "TOTAL"),
+        ("DOMESTIC FREIGHT", "DOMESTIC"),
+        ("INTERNATIONAL FREIGHT", "INTERNATIONAL"),
+    ])
+    def test_headings_map_to_the_right_direction(self, heading, expected):
+        d = self._match(heading)
+        assert d is not None and d.value == expected
+
+    def test_total_wins_over_its_component_words(self):
+        """'TOTAL(INTL DOM) FREIGHT' contains INTL; a combined section
+        must not be read as one of its parts."""
+        assert self._match("( ) TOTAL(INTL DOM) FREIGHT").value == "TOTAL"
+
+    def test_a_non_heading_line_matches_nothing(self):
+        assert self._match("1 AMRITSAR 175.7 107.4 63.6%") is None

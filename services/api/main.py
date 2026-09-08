@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -253,6 +253,97 @@ def sources(session: Session = Depends(get_session)) -> dict:
         FROM v_source GROUP BY publisher ORDER BY facts DESC NULLS LAST
     """)).mappings().all()
     return {"publishers": [dict(r) for r in rows]}
+
+
+# ----------------------------------------------------------- reporting --
+
+@app.get("/api/v1/reports/brief", tags=["reports"])
+def report_brief(
+    period: str | None = Query(None, description="e.g. 2026-07; defaults to latest"),
+    fmt: str = Query("html", pattern="^(html|markdown|json)$"),
+    session: Session = Depends(get_session),
+):
+    """A periodic brief, assembled entirely from stored rows."""
+    from services.reporting import brief as brief_mod
+
+    brief = brief_mod.build(session, period)
+    if fmt == "html":
+        return HTMLResponse(brief_mod.render_html(brief))
+    if fmt == "markdown":
+        return PlainTextResponse(brief_mod.render_markdown(brief))
+    from dataclasses import asdict
+
+    return asdict(brief)
+
+
+@app.get("/api/v1/insights", tags=["intelligence"])
+def insights(
+    limit: int = Query(20, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Explanations written against detected anomalies."""
+    rows = session.execute(text("""
+        SELECT insight_id, headline, narrative, citations, created_at,
+               entity_key, severity, period
+        FROM v_insight ORDER BY insight_id DESC LIMIT :lim
+    """), {"lim": limit}).mappings().all()
+    return {"rows": [dict(r) for r in rows], "row_count": len(rows)}
+
+
+# ------------------------------------------------------------- operations --
+
+@app.get("/metrics", include_in_schema=False)
+def metrics(session: Session = Depends(get_session)) -> PlainTextResponse:
+    """Prometheus exposition (SRS NFR-8).
+
+    Deliberately computed on scrape rather than kept in a counter: these
+    are warehouse facts, so reading them is both cheap and always
+    consistent with what the API would serve.
+    """
+    rows = session.execute(text("""
+        SELECT
+          (SELECT count(*) FROM v_cargo_fact),
+          (SELECT count(*) FROM v_anomaly),
+          (SELECT count(*) FROM v_forecast),
+          (SELECT count(DISTINCT period) FROM v_cargo_fact),
+          (SELECT extract(epoch FROM now() - max(retrieved_at)) FROM v_source)
+    """)).one()
+    facts, anomalies, forecasts, periods, staleness = rows
+
+    from services.scheduler import last_state
+
+    state = last_state() or {}
+    ok = 1 if state.get("ok") else 0
+
+    lines = [
+        "# HELP aci_facts_total Cargo facts held in the warehouse.",
+        "# TYPE aci_facts_total gauge",
+        f"aci_facts_total {facts}",
+        "# HELP aci_anomalies_total Anomalies currently flagged.",
+        "# TYPE aci_anomalies_total gauge",
+        f"aci_anomalies_total {anomalies}",
+        "# HELP aci_forecasts_total Forecast rows held.",
+        "# TYPE aci_forecasts_total gauge",
+        f"aci_forecasts_total {forecasts}",
+        "# HELP aci_periods_total Distinct reporting periods held.",
+        "# TYPE aci_periods_total gauge",
+        f"aci_periods_total {periods}",
+        "# HELP aci_source_staleness_seconds Age of the most recent retrieval.",
+        "# TYPE aci_source_staleness_seconds gauge",
+        f"aci_source_staleness_seconds {float(staleness or 0):.0f}",
+        "# HELP aci_last_pipeline_success Whether the last scheduled run succeeded.",
+        "# TYPE aci_last_pipeline_success gauge",
+        f"aci_last_pipeline_success {ok}",
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
+
+
+@app.get("/api/v1/pipeline/state", tags=["meta"])
+def pipeline_state() -> dict:
+    """The outcome of the last scheduled run, stage by stage."""
+    from services.scheduler import last_state
+
+    return last_state() or {"ok": False, "detail": "no scheduled run has completed yet"}
 
 
 # ------------------------------------------------------------------ chat --
