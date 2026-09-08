@@ -26,8 +26,14 @@ def upgrade() -> None:
     predicate banned any `api-key=`, which also rejected the redacted
     form `api-key=<redacted>` that we deliberately store.
     """
+    # op.f() marks the name as already final. Without it the metadata
+    # naming convention ("ck_%(table_name)s_%(constraint_name)s") is applied
+    # to a name that already carries the prefix, and the statement becomes
+    # DROP CONSTRAINT ck_source_document_ck_source_document_no_credential_in_url.
+    # An incrementally migrated database never hits this; a database built
+    # from scratch fails here every time, which made the chain undeployable.
     op.drop_constraint(
-        "ck_source_document_no_credential_in_url", "source_document", type_="check"
+        op.f("ck_source_document_no_credential_in_url"), "source_document", type_="check"
     )
     op.create_check_constraint(
         "no_credential_in_url",
@@ -38,7 +44,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint(
-        "ck_source_document_no_credential_in_url", "source_document", type_="check"
+        op.f("ck_source_document_no_credential_in_url"), "source_document", type_="check"
     )
     op.create_check_constraint(
         "no_credential_in_url", "source_document", "source_url NOT ILIKE '%api-key=%'"
