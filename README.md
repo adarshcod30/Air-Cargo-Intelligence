@@ -346,9 +346,21 @@ responded, not what was hoped for.
 | **AAI** traffic news, Annexure IV | ✅ **live** | PDF (bilingual) | Airport × month × international/domestic/total, in MT |
 | **Eurostat** `avia_gooa` | ✅ **live** | JSON-stat API | Airport × year × coverage, in tonnes |
 | **OpenFlights** crosswalk | ✅ **live** | CSV | 7,698 airports — reference data, not cargo |
-| **DGCA** traffic statistics | ⚠️ needs discovery | JS portal | Report links are rendered client-side, so no static hrefs exist |
-| **`data.gov.in`** | ⚠️ needs credential | REST | `api.data.gov.in` returns 403 without a free API key |
+| **`data.gov.in`** (OGD) | 🔑 needs one free key | REST catalogue + REST | 373 aviation datasets, discovered via the catalogue API and pulled by `resource_id` |
+| **DGCA** traffic statistics | ↩︎ covered via OGD | — | DGCA data is republished on `data.gov.in`, so the JS portal need not be scraped |
 | **World Bank** `IS.AIR.GOOD.MT.K1` | ⚠️ degraded | REST | Endpoint timed out repeatedly from our network |
+
+**On the OGD platform key.** One API key covers the entire platform - this
+was verified against the live API, not assumed. Datasets are addressed by
+`resource_id` (a UUID), so nothing needs downloading by hand: the
+catalogue endpoint is paged once to discover every air-cargo resource,
+then each is pulled with the same key. A dataset qualifies only if it
+matches **both** an aviation term and a cargo term, so railway freight
+and airport passenger tables are excluded rather than swept in.
+
+A useful side effect: DGCA's statistics are republished on the OGD
+platform, so the DGCA portal - whose report links are rendered
+client-side and expose no static hrefs - does not need to be scraped.
 
 AAI publishes freight as **Annexure IV**, split IV-A international, IV-B
 domestic, IV-C total. Section headings appear only on the first page of

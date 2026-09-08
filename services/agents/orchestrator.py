@@ -73,6 +73,8 @@ class Pipeline:
         return self._extract_all(docs)
 
     def _discover(self, source) -> list[SourceDocument]:
+        if source.key == "data_gov_in_cargo":
+            return self._discover_ogd(source)
         if source.api_template and source.api_params:
             return self._discover_api(source)
         if not source.index_url:
@@ -84,6 +86,43 @@ class Pipeline:
         docs: list[SourceDocument] = agent.context.get("documents", []) or []
         self.report.documents_discovered += len(docs)
         log.info(f"discovery: {run.result_summary}")
+        return docs
+
+    def _discover_ogd(self, source) -> list[SourceDocument]:
+        """Discover air-cargo datasets from the OGD catalogue.
+
+        The platform has no server-side sector filter on its list endpoint,
+        so the index is paged once, cached, and filtered locally. Each
+        surviving resource keeps the terms that matched, so the decision to
+        include a dataset can be reviewed rather than taken on trust.
+        """
+        from services.ingestion.datagovin_catalog import MissingApiKey, OgdCatalogue
+
+        try:
+            catalogue = OgdCatalogue()
+            candidates = catalogue.air_cargo_resources()
+        except MissingApiKey as exc:
+            log.warning(f"{source.key}: {exc}")
+            return []
+        except Exception as exc:
+            log.error(f"{source.key}: catalogue unavailable: {exc}")
+            return []
+
+        docs = [
+            SourceDocument(
+                publisher=source.publisher,
+                source_url=res.api_url(catalogue.api_key or ""),
+                hints={
+                    "source_key": source.key,
+                    "resource_id": res.resource_id,
+                    "title": res.title,
+                    "matched_terms": evidence,
+                },
+            )
+            for res, evidence in candidates
+        ]
+        self.report.documents_discovered += len(docs)
+        log.info(f"{source.key}: {len(docs)} air-cargo dataset(s) discovered")
         return docs
 
     def _discover_api(self, source) -> list[SourceDocument]:

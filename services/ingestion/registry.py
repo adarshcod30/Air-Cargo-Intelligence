@@ -100,7 +100,12 @@ REGISTRY: list[Source] = [
         title="Open Government Data portal - air cargo datasets",
         status=SourceStatus.NEEDS_CREDENTIAL,
         api_template="https://api.data.gov.in/resource/{resource_id}?api-key={key}&format=json",
-        notes="api.data.gov.in returns 403 without a key. Free registration required.",
+        notes=(
+            "Catalogue-driven: api.data.gov.in/lists is paged to discover every "
+            "air-cargo resource, then each is pulled by its resource_id. ONE key "
+            "covers the whole platform - verified against the live API - so no "
+            "dataset needs downloading by hand. Set DATA_GOV_IN_API_KEY to enable."
+        ),
     ),
     Source(
         key="world_bank_air_freight",

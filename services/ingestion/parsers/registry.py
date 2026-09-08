@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from services.ingestion.parsers.aai_freight import AAIFreightParser
 from services.ingestion.parsers.base import Parser
+from services.ingestion.parsers.datagovin import DataGovInParser
 from services.ingestion.parsers.eurostat_freight import EurostatFreightParser
 
 
 def all_parsers() -> list[Parser]:
-    return [AAIFreightParser(), EurostatFreightParser()]
+    return [AAIFreightParser(), EurostatFreightParser(), DataGovInParser()]
 
 
 def by_name(name: str) -> Parser | None:

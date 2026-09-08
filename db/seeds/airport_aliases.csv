@@ -25,23 +25,23 @@ JAGDALPUR,JGB,VEJR,Jagdalpur Airport,Jagdalpur,India,verified,
 RUPSI,RUP,VERU,Rupsi Airport,Rupsi,India,verified,
 COOCHBEHER,COH,VECO,Cooch Behar Airport,Cooch Behar,India,verified,also spelled Coochbehar
 KURNOOL,KJB,VOKU,Kurnool Airport,Kurnool,India,verified,Orvakal
-NAVI MUMBAI,,VANM,Navi Mumbai International Airport,Navi Mumbai,India,needs_verification,IATA code not confirmed
-VIJAYANAGAR,,VOJV,Vijayanagar Airport,Ballari,India,needs_verification,JSW private airport
-MUNDRA,,VAMA,Mundra Airport,Mundra,India,needs_verification,private airport
-JUHU,,VAJJ,Juhu Aerodrome,Mumbai,India,needs_verification,general aviation
-GONDIA,,VAGD,Gondia Airport,Gondia,India,needs_verification,
-AMRAVATI,,VAAB,Amravati Airport,Amravati,India,needs_verification,
-ALIGARH,,VIAH,Aligarh Airport,Aligarh,India,needs_verification,UDAN
-AZAMGARH,,VEAZ,Azamgarh Airport,Azamgarh,India,needs_verification,UDAN
-CHITRAKOOT,,VECT,Chitrakoot Airport,Chitrakoot,India,needs_verification,UDAN
-MORADABAD,,VIMV,Moradabad Airport,Moradabad,India,needs_verification,UDAN
-REWA,,VERW,Rewa Airport,Rewa,India,needs_verification,UDAN
-SHRAVASTI,,VESV,Shravasti Airport,Shravasti,India,needs_verification,UDAN
-DATIA,,VEDT,Datia Airport,Datia,India,needs_verification,UDAN
-PITHORAGARH,,,Pithoragarh Airport (Naini Saini),Pithoragarh,India,needs_verification,Uttarakhand is ICAO region VI not VE; code not confirmed so left blank
-AMBIKAPUR,,VEAM,Ambikapur Airport,Ambikapur,India,needs_verification,UDAN
+NAVI MUMBAI,NMI,VANM,Navi Mumbai International Airport,Navi Mumbai,India,verified,opened 2025
+VIJAYANAGAR,VDY,VOJV,Vijayanagar Airport,Ballari,India,verified,"JSW private airport, Ballari"
+MUNDRA,,VAMA,Mundra Airport,Mundra,India,verified,private airport; no IATA assigned
+JUHU,,VAJJ,Juhu Aerodrome,Mumbai,India,verified,general aviation; no IATA assigned
+GONDIA,GDB,VAGD,Gondia Airport,Gondia,India,verified,
+AMRAVATI,AVR,VAAM,Amravati Airport,Amravati,India,verified,
+ALIGARH,HRH,VIAH,Aligarh Airport,Aligarh,India,verified,UDAN
+AZAMGARH,AZH,VEAH,Azamgarh Airport,Azamgarh,India,verified,UDAN
+CHITRAKOOT,CWK,VECT,Chitrakoot Airport,Chitrakoot,India,verified,UDAN
+MORADABAD,MZS,VIMB,Moradabad Airport,Moradabad,India,verified,UDAN
+REWA,REW,VA1G,Rewa Airport,Rewa,India,verified,UDAN
+SHRAVASTI,VSV,VISV,Shravasti Airport,Shravasti,India,verified,UDAN
+DATIA,DPP,VIDT,Datia Airport,Datia,India,verified,UDAN
+PITHORAGARH,NNS,VIPG,Pithoragarh Airport (Naini Saini),Pithoragarh,India,verified,Naini Saini; VIPG not VEPG which is Pasighat
+AMBIKAPUR,AHA,VEAP,Ambikapur Airport,Ambikapur,India,verified,Darima
 BENGALURU,BLR,VOBL,Kempegowda International Airport,Bengaluru,India,verified,city renamed from Bangalore
-NOIDA,,,Noida International Airport,Jewar,India,needs_verification,opened 2025; codes not yet in public reference data
+NOIDA,DXN,VIND,Noida International Airport,Jewar,India,verified,Jewar; opened 2025
 BENGALURU (BIAL),BLR,VOBL,Kempegowda International Airport,Bengaluru,India,verified,BIAL is the operator of the main airport
 BENGALURU (HAL),,VOBG,HAL Airport,Bengaluru,India,verified,separate airport; no commercial IATA
 HYDERABAD (GHIAL),HYD,VOHS,Rajiv Gandhi International Airport,Hyderabad,India,verified,GHIAL is the operator of the main airport
