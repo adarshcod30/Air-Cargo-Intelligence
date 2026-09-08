@@ -5,7 +5,7 @@
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
 [![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-218%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
@@ -497,6 +497,14 @@ Air-Cargo-Intelligence/
 │   │   ├── trend.py          # YoY, MoM, CAGR, share, STL
 │   │   ├── anomaly.py        # Robust z-score + STL residual
 │   │   └── forecast.py       # SARIMA vs baseline, rolling-origin backtest
+│   ├── semantic/
+│   │   ├── registry.py       # One definition per metric; the allowlist
+│   │   ├── compiler.py       # Names in, read-only SQL out
+│   │   ├── executor.py       # Runs it, attaches provenance
+│   │   └── nl.py             # Intent -> registered metrics -> prose
+│   └── api/
+│       ├── main.py           # FastAPI routes
+│       └── schemas.py        # Request/response contracts
 │   └── agents/
 │       ├── base.py           # The agent loop: goal, tools, budget, trace
 │       ├── policy.py         # HeuristicPolicy + LLMPolicy
@@ -596,40 +604,63 @@ let the model policy handle documents the heuristics do not anticipate.
 
 ## Usage / API Reference
 
+```bash
+uvicorn services.api.main:app --reload      # http://127.0.0.1:8000/docs
+```
+
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/v1/airports/rankings` | Airports ranked by tonnage or growth for a period |
-| `GET` | `/api/v1/commodities/trends` | Commodity-level trend series with share shift |
-| `GET` | `/api/v1/airlines/share` | Airline cargo market share over time |
-| `GET` | `/api/v1/anomalies` | Detected anomalies, filterable by severity and dimension |
-| `GET` | `/api/v1/forecasts` | Forecast series with prediction intervals |
-| `POST` | `/api/v1/chat/query` | Natural-language question → grounded answer with citations |
-| `POST` | `/api/v1/reports/generate` | Generate a monthly or quarterly brief |
-| `GET` | `/api/v1/sources` | Ingested source documents and freshness |
+| `GET` | `/api/v1/health` | Row counts and database status |
+| `GET` | `/api/v1/semantic` | The metric registry, so a client can discover what it may ask |
+| `GET` | `/api/v1/airports/rankings` | Airports by tonnage or year-on-year growth |
+| `GET` | `/api/v1/airports/trend` | One airport's series over every period held |
+| `GET` | `/api/v1/airlines/share` | Carrier cargo share; industry totals excluded by default |
+| `GET` | `/api/v1/anomalies` | Detected anomalies, most deviant first |
+| `GET` | `/api/v1/forecasts` | Forecasts with intervals and backtest error |
+| `GET` | `/api/v1/sources` | Publishers and the documents behind the facts |
+| `POST` | `/api/v1/chat/query` | Natural-language question, answered from stored rows |
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/chat/query \
+curl -X POST http://127.0.0.1:8000/api/v1/chat/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "Show the top 5 cargo airports by growth in the last quarter"}'
+  -d '{"question": "Show the top 5 cargo airports by growth"}'
 ```
 
 ```jsonc
 {
-  "answer": "Bengaluru (BLR) led growth at 18.2% YoY, followed by Hyderabad (HYD) at 15.4% ...",
-  "chart": { "type": "bar", "x": "airport", "y": "growth_yoy" },
-  "rows": [
-    { "airport": "BLR", "tonnage_kg": 3073000, "growth_yoy": 0.182 }
-  ],
-  "citations": [
-    { "claim": "Bengaluru led growth at 18.2% YoY",
-      "source_document_id": 412,
-      "publisher": "AAI",
-      "published_on": "2025-10-15" }
-  ]
+  "answer": "For 2026-07 (total), Jammu Airport (IXJ) grew fastest at 484.5% year on year, moving 109.3 MT. Next were RAJ 212.9 MT, ISK 832.8 MT, IXC 1,942.2 MT.",
+  "intent": "airport_ranking",
+  "understood_as": "top airports by year-on-year growth, total, 2026-07",
+  "grounded": true,
+  "rows": [{ "airport_iata": "IXJ", "tonnage_mt": 109.3, "growth_yoy_pct": 484.49 }],
+  "chart": { "type": "bar", "x": "airport_iata", "y": "growth_yoy_pct" },
+  "citations": [{ "publisher": "AAI", "source_url": "https://www.aai.aero/..." }]
 }
 ```
 
----
+`understood_as` is returned on every answer so a misreading is visible
+rather than hidden behind a confident sentence, and `grounded` is the
+result of an actual check, not a claim - see below.
+
+### How the grounding guarantee is enforced
+
+Three mechanisms, none of which relies on instructing a model politely:
+
+1. **The caller never supplies SQL.** It supplies *names* of metrics,
+   dimensions and filters, each looked up in the registry before
+   anything is emitted. An unregistered name is a 400. Values are always
+   bound as parameters, so `DEL'; DROP TABLE x;--` becomes a parameter,
+   not a statement.
+2. **Only allowlisted views are reachable.** The base tables cannot be
+   named at all, and every view carries `source_document_id`, so a row
+   without provenance is not constructible.
+3. **Every figure is checked back against the rows** before an answer is
+   returned. An answer quoting a number that is not in its own result
+   set is suppressed rather than sent.
+
+That last check has already caught real bugs in itself - a `Decimal`
+that no `isinstance(x, float)` would match, and the period label
+`2026-07` being read as the figure -7.
 
 ## Testing
 
@@ -667,8 +698,9 @@ from a failure actually observed against live data:
 
 **Phase 2 · Intelligence**
 - [x] Trend, anomaly, and forecast agents with backtesting
-- [ ] Semantic layer and metric registry
-- [ ] Grounded chat with citation enforcement
+- [x] Semantic layer and metric registry
+- [x] REST API with citations on every response
+- [x] Grounded natural-language querying
 - [ ] Dashboards, alert feed, auto-generated reports
 
 **Phase 3 · Scale**
