@@ -73,7 +73,17 @@ _AGGREGATE_AIRLINE = re.compile(
 # Rate and ratio columns are not tonnage. Ingesting a percentage as a mass
 # would be worse than ingesting nothing.
 _NON_TONNAGE = re.compile(
-    r"percent|growth|_kms|kilometer|kilometre|factor|per_|ratio|productivity", re.I
+    r"percent|growth|_kms|kilometer|kilometre|factor|per_|ratio|productivity|"
+    # Aircraft specifications, not cargo actually moved. A fleet table's
+    # "SIZE AV. PAYLOAD CAPACITY (TONNES)" matched on "tonnes" and was
+    # being ingested as though the aircraft had carried that much.
+    # Fleet tables prefix their specification columns with SIZE:
+    #   "SIZE AV. PAYLOAD CAPACITY (TONNES)"
+    #   "SIZE AV. M.C.T.OM WEIGHT (IN TONNE)"
+    # The platform normalises punctuation to underscores, so match on the
+    # separator-insensitive form rather than the printed one.
+    r"capacity|payload|installed|seats|\bsize\b|m c t o|mctom|available",
+    re.I,
 )
 
 _UNIT_IN_NAME = [
@@ -191,12 +201,22 @@ class DataGovInParser:
         direction = self._infer_direction(data.get("title", ""), tonnage_col)
         default_period = self._infer_period(data.get("title", ""))
 
+        carried_year: int | None = None
         for rec in records:
             result.rows_seen += 1
+            # A row whose period cell names a year is a header for the rows
+            # beneath it; remember the year and move on.
+            header_year = _header_year(rec, period_col)
+            if header_year is not None:
+                carried_year = header_year
             tonnage = parse_number(rec.get(tonnage_col))
             if tonnage is None:
                 continue
-            period = self._row_period(rec, period_col) or default_period or "unknown"
+            period = (
+                self._row_period(rec, period_col, carried_year)
+                or default_period
+                or "unknown"
+            )
 
             if grain is Grain.AIRLINE:
                 result.facts.append(
@@ -260,7 +280,12 @@ class DataGovInParser:
         is a percentage and the other is a distance-weighted measure, and
         storing either as kilograms would be silently wrong.
         """
-        safe = [c for c in columns if not _NON_TONNAGE.search(c)]
+        # Separators are normalised first so "m_c_t_om" and "M.C.T.OM"
+        # are rejected by the same pattern.
+        def _spec(col: str) -> bool:
+            return bool(_NON_TONNAGE.search(re.sub(r"[_.\-]+", " ", col)))
+
+        safe = [c for c in columns if not _spec(c)]
         # A total is preferred over a component so freight and mail are
         # not double-counted when both are present.
         for preferred in ("total", "freight", "cargo"):
@@ -286,12 +311,25 @@ class DataGovInParser:
         return f"{m.group(0)}-A" if m else None
 
     @staticmethod
-    def _row_period(rec: dict, period_col: str | None) -> str | None:
+    def _row_period(rec: dict, period_col: str | None,
+                    carried_year: int | None = None) -> str | None:
         if not period_col:
             return None
         raw = str(rec.get(period_col) or "").strip()
         if not raw:
             return None
+
+        # These tables put a fiscal-year header row above bare month names:
+        #   2015-16 / APR / MAY / JUN ...
+        # A month with no year of its own must inherit the header's, and
+        # under an Indian fiscal year APR-DEC belong to the first calendar
+        # year while JAN-MAR belong to the second.
+        month = _MONTH_NAME.get(raw.strip().lower()[:3])
+        if month is not None:
+            if carried_year is None:
+                return None
+            year = carried_year if month >= 4 else carried_year + 1
+            return f"{year}-{month:02d}"
         # '2007-08' is the Indian fiscal year 2007-08, NOT August 2007.
         # The tell is that the second part is the next year's last two
         # digits. Reading it as a month would file a full year of cargo
@@ -360,3 +398,23 @@ def _measure_slug(title: str, column: str) -> str:
     if not base:
         base = re.sub(r"[^a-z0-9]+", "-", (column or "measure").lower()).strip("-")
     return base[:60] or "measure"
+
+
+_MONTH_NAME = {
+    m: i for i, m in enumerate(
+        ["jan", "feb", "mar", "apr", "may", "jun",
+         "jul", "aug", "sep", "oct", "nov", "dec"], start=1)
+}
+
+
+def _header_year(rec: dict, period_col: str | None) -> int | None:
+    """The calendar year a '2015-16' style header row establishes."""
+    if not period_col:
+        return None
+    raw = str(rec.get(period_col) or "").strip()
+    m = re.match(r"^((?:19|20)\d{2})\s*[-/]\s*\d{2,4}$", raw)
+    if m:
+        return int(m.group(1))
+    if re.match(r"^(?:19|20)\d{2}$", raw):
+        return int(raw)
+    return None

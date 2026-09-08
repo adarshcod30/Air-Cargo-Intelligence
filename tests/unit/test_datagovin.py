@@ -251,3 +251,79 @@ class TestAirlineNameQuality:
                              source_url="https://api.data.gov.in/resource/x")
         r = DataGovInParser().parse(doc, payload)
         assert r.facts and r.facts[0].is_aggregate is True
+
+
+class TestFiscalMonthRows:
+    """These tables put a fiscal-year header above bare month names:
+
+        year_month
+        ----------
+        2015-16      <- header
+        APR
+        MAY
+
+    A month with no year of its own inherits the header's. Without that
+    every month fell back to the title's year and twelve rows collapsed
+    into a single annual period, losing the monthly dimension entirely.
+    """
+
+    def test_header_row_yields_its_first_year(self):
+        from services.ingestion.parsers.datagovin import _header_year
+        assert _header_year({"y": "2015-16"}, "y") == 2015
+        assert _header_year({"y": "2015"}, "y") == 2015
+        assert _header_year({"y": "APR"}, "y") is None
+
+    @pytest.mark.parametrize("month,expected", [
+        ("APR", "2015-04"), ("DEC", "2015-12"),
+        # An Indian fiscal year runs April to March, so the calendar year
+        # rolls over at January.
+        ("JAN", "2016-01"), ("MAR", "2016-03"),
+    ])
+    def test_month_inherits_the_fiscal_year_correctly(self, month, expected):
+        assert DataGovInParser._row_period({"y": month}, "y", 2015) == expected
+
+    def test_month_without_a_header_is_refused(self):
+        """Guessing the year would misdate the whole series."""
+        assert DataGovInParser._row_period({"y": "APR"}, "y", None) is None
+
+    def test_monthly_rows_produce_distinct_periods(self):
+        payload = json.dumps({
+            "index_name": "x",
+            "title": "Monthly Traffic and Operating Statistics of Jetlite from 2015-16",
+            "field": [{"name": "year_month"}, {"name": "cargo_carried_ton___total"}],
+            "records": [
+                {"year_month": "2015-16", "cargo_carried_ton___total": ""},
+                {"year_month": "APR", "cargo_carried_ton___total": "100"},
+                {"year_month": "MAY", "cargo_carried_ton___total": "110"},
+                {"year_month": "JAN", "cargo_carried_ton___total": "120"},
+            ],
+        }).encode()
+        doc = SourceDocument(publisher=Publisher.DATA_GOV_IN,
+                             source_url="https://api.data.gov.in/resource/x")
+        r = DataGovInParser().parse(doc, payload)
+        assert {f.period for f in r.facts} == {"2015-04", "2015-05", "2016-01"}
+
+
+class TestAircraftSpecColumnsRejected:
+    """A fleet table's "SIZE AV. PAYLOAD CAPACITY (TONNES)" contains the
+    word tonnes but describes what an aircraft *could* carry, not what it
+    did. Ingesting it as cargo moved is simply a wrong number."""
+
+    @pytest.mark.parametrize("column", [
+        "size_av_payload_capacity_tonnes_",
+        "available_tonne_kilometers_million_",
+        "size_no_of_installed_pax_seats",
+        "size_av_m_c_t_om_weight_in_tonne",
+    ])
+    def test_specification_columns_are_not_tonnage(self, column):
+        assert DataGovInParser._pick_tonnage([column, "aircraft_type"]) is None
+
+    def test_fleet_table_yields_no_tonnage_column(self):
+        cols = ["aircraft_type", "number_of_aircraft_acquired",
+                "size_av_payload_capacity_tonnes_"]
+        assert DataGovInParser._pick_tonnage(cols) is None
+
+    def test_real_cargo_column_still_chosen(self):
+        cols = ["year_month", "cargo_carried_ton___total",
+                "available_tonne_kilometers_million_"]
+        assert DataGovInParser._pick_tonnage(cols) == "cargo_carried_ton___total"

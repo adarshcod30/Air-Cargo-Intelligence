@@ -5,7 +5,7 @@
 ### An agentic analytics platform that turns fragmented Indian air-cargo data into ranked airports, explained anomalies, and source-cited answers.
 
 [![Status](https://img.shields.io/badge/status-ingestion%20live%20%C2%B7%20analytics%20in%20progress-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-98%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Node](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)](web/package.json)
@@ -487,16 +487,27 @@ Air-Cargo-Intelligence/
 │   │   ├── store.py          # Raw archive + provenance ledger
 │   │   ├── normalise.py      # Units, airport identity, periods
 │   │   ├── seed.py           # Builds the airport crosswalk
-│   │   └── parsers/          # aai_freight, eurostat_freight, registry
+│   │   ├── datagovin_catalog.py  # OGD catalogue discovery
+│   │   └── parsers/          # aai_freight, eurostat_freight, datagovin
+│   ├── warehouse/
+│   │   ├── schema.py         # Star schema; guarantees live in the DB
+│   │   ├── loader.py         # Idempotent upsert from facts to warehouse
+│   │   └── queries.py        # One definition per metric
+│   ├── analytics/
+│   │   ├── trend.py          # YoY, MoM, CAGR, share, STL
+│   │   ├── anomaly.py        # Robust z-score + STL residual
+│   │   └── forecast.py       # SARIMA vs baseline, rolling-origin backtest
 │   └── agents/
 │       ├── base.py           # The agent loop: goal, tools, budget, trace
 │       ├── policy.py         # HeuristicPolicy + LLMPolicy
 │       ├── discovery_agent.py
 │       ├── extraction_agent.py
 │       ├── reconciliation_agent.py
+│       ├── analytics_agent.py
 │       └── orchestrator.py   # Pipeline + CLI
+├── db/migrations/            # Alembic revisions
 ├── tests/
-│   ├── unit/                 # 53 tests
+│   ├── unit/                 # 143 tests
 │   └── fixtures/             # Golden AAI PDF — the layout-change tripwire
 ├── pyproject.toml
 └── README.md
@@ -557,6 +568,18 @@ python -m services.agents.orchestrator --source aai_freight --limit 6
 ```bash
 # 3. Ingest every live source, India and Europe
 python -m services.agents.orchestrator --all --limit 8
+```
+
+```bash
+# 4. Create the warehouse and load the facts into it
+createdb air_cargo
+alembic upgrade head
+python -m services.warehouse.loader
+```
+
+```bash
+# 5. Compute trends, anomalies and forecasts
+python -m services.agents.analytics_agent
 ```
 
 Output lands in `data/processed/`:
@@ -638,11 +661,12 @@ from a failure actually observed against live data:
 - [x] AAI freight parser (bilingual PDF) and Eurostat JSON-stat parser
 - [x] Airport crosswalk + curated alias overlay; 100% reconciliation
 - [x] Golden-fixture test suite (53 tests)
-- [ ] PostgreSQL warehouse schema and Alembic migrations
-- [ ] DGCA discovery via rendered crawl; `data.gov.in` API key
+- [x] PostgreSQL star schema, Alembic migrations, idempotent loader
+- [x] Trend, anomaly and forecast analytics with backtesting
+- [ ] DGCA discovery via rendered crawl (mostly covered through OGD)
 
 **Phase 2 · Intelligence**
-- [ ] Trend, anomaly, and forecast agents with backtesting
+- [x] Trend, anomaly, and forecast agents with backtesting
 - [ ] Semantic layer and metric registry
 - [ ] Grounded chat with citation enforcement
 - [ ] Dashboards, alert feed, auto-generated reports
