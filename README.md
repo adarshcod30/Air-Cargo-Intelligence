@@ -12,7 +12,9 @@
 [![Last Commit](https://img.shields.io/github/last-commit/adarshcod30/Air-Cargo-Intelligence)](.)
 [![Issues](https://img.shields.io/github/issues/adarshcod30/Air-Cargo-Intelligence)](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
 
-[**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Sample brief**](docs/assets/sample-brief.md) &nbsp;·&nbsp; [**Report Bug**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues) &nbsp;·&nbsp; [**Request Feature**](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
+[**Live demo**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app) &nbsp;·&nbsp; [**Agent console**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app/#agents) &nbsp;·&nbsp; [**API docs**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app/docs) &nbsp;·&nbsp; [**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Sample brief**](docs/assets/sample-brief.md)
+
+`agentic-ai` · `rag` · `aws-bedrock` · `pgvector` · `time-series-forecasting` · `anomaly-detection` · `fastapi` · `postgresql`
 
 </div>
 
@@ -68,6 +70,9 @@
 | **Short-term forecasting** | SARIMA and gradient-boosted baselines with rolling-origin backtesting, published with prediction intervals rather than bare point estimates. |
 | **Conversational analyst** | Natural-language questions resolved through a governed semantic layer to read-only SQL, answered with inline citations to source documents. |
 | **Alert feed & auto-reports** | Proactive anomaly alerts and one-click monthly/quarterly briefs with charts embedded, requiring no analyst effort. |
+| **Agent console** | Every agent run is a warehouse row: the goal, each tool call in order, the reasoning behind the choice, what came back, and which policy decided it. Replays step by step over SSE. This is the difference between claiming an architecture is agentic and being able to show it. |
+| **Hybrid retrieval** | 1,410 passages from the source PDFs and open-data payloads, indexed with `pgvector` (HNSW, cosine) and Postgres full text, fused on rank. Upgrades a citation from "this document" to "this paragraph, this page". |
+| **Policy A/B harness** | Runs the same goal over the same documents under the deterministic policy and the model policy, and reports steps, success rate, latency and token spend. Reports *"not a comparison"* when no model call succeeded, rather than presenting noise as a result. |
 
 ---
 
@@ -79,13 +84,15 @@ not import is a claim a reader cannot check.
 
 | Layer | Technology | Why |
 |---|---|---|
-| Dashboard | Single-page app served by the API, Chart.js | It has to reach a local API, so same-origin removes both a build step and a CORS dance. |
+| Dashboard | Single-page app served by the API, inline SVG | No framework and no build step. One bar chart does not justify a charting dependency, and same-origin removes the CORS dance. |
 | API | FastAPI, Pydantic v2, Uvicorn | Typed contracts that generate the OpenAPI spec the dashboard consumes. |
 | Agents | Custom loop with pluggable policies | A goal, tools, a budget and a recorded trace. The policy is heuristic by default and a language model when one is configured. |
-| Language model | Any OpenAI-compatible endpoint; optional | Used only to choose a tool or narrate supplied rows. The pipeline runs fully without one. |
+| Reasoning layer | AWS Bedrock, Converse API | One request shape across Nova, Llama and Mistral, so swapping the model is a config change. Used only to choose a tool or narrate supplied rows — never to compute a figure. |
+| Retrieval | `pgvector` (HNSW), Postgres FTS, Titan embeddings | Dense and lexical retrievers fail differently; fusing them on rank fixes queries that either alone gets wrong. Falls back to an offline hashed TF-IDF embedder with no credentials. |
 | Ingestion | `httpx`, `pdfplumber`, `pandas` | DGCA and AAI publish tabular data inside PDFs; extraction is a first-class problem here, not a footnote. |
-| Warehouse | PostgreSQL 16, SQLAlchemy, Alembic | One store for facts, provenance and agent output, with the guarantees held in the schema. |
+| Warehouse | PostgreSQL 17, SQLAlchemy, Alembic | One store for facts, provenance and agent output, with the guarantees held in the schema. |
 | Analytics | `statsmodels`, `scikit-learn`, `numpy` | Classical time series suits monthly aggregates with strong seasonality and short history. |
+| Hosting | Vercel (serverless) + Neon Postgres | The read path imports no analytics, so it fits a serverless function; forecasts arrive as rows. Chosen over a sleeping free tier so a portfolio link is always warm. |
 | Scheduling | Plain scheduler + GitHub Actions cron | One linear daily chain over a few public endpoints. A workflow engine would add a dependency without removing a problem. |
 | Observability | Prometheus exposition at `/metrics` | Fact counts, source staleness and last-run status. |
 | CI | GitHub Actions | Lint, type-check and the suite against a real Postgres on every push. |
@@ -463,6 +470,39 @@ Three criteria sit below target, and are reported rather than softened:
 
 ## Deployment & Infrastructure
 
+**Live:** the read path runs as a serverless function on Vercel against a
+Neon Postgres, both in `us-east-1`. Two properties of the design make that
+possible, and neither was added for the deployment:
+
+- The API imports no analytics. Forecasts, trends and anomalies are
+  computed by the scheduled pipeline and read back as rows, so the serving
+  bundle needs neither `statsmodels` nor `scipy` — together those exceed
+  the serverless size limit outright. `requirements.txt` is the serving
+  subset; local development installs the full set from `pyproject.toml`.
+- The serving role holds `SELECT` on views and nothing else, so exposing
+  the database to a function that the public can reach does not widen what
+  that function can read.
+
+```mermaid
+flowchart LR
+    subgraph offline["Offline · scheduled"]
+        ING["Ingestion agents<br/>PDF · CSV · JSON"] --> WH[("Neon Postgres<br/>star schema + pgvector")]
+        ANA["Analytics<br/>statsmodels · STL · SARIMA"] --> WH
+        IDX["Passage indexer<br/>Titan embeddings"] --> WH
+    end
+    subgraph online["Online · serverless"]
+        API["FastAPI on Vercel<br/>reads only"] --> WH
+        UI["Dashboard<br/>+ agent console"] --> API
+    end
+    WH -. "aci_readonly<br/>SELECT on views only" .-> API
+```
+
+| Concern | Choice | Why |
+|---|---|---|
+| Compute | Vercel serverless | Does not sleep. A free tier that idles out makes a portfolio link dead on arrival for whoever opens it first. |
+| Database | Neon Postgres 17 | `pgvector` available, and the branch model makes a throwaway copy cheap. Compute suspends when idle and wakes in well under a second. |
+| Bundle | ~115 MB | Inside the 250 MB limit only because the read path is separated from the compute path. |
+
 - **Local run:** PostgreSQL plus a Python virtualenv. No containers - the
   stack is one database and one process, and a container layer would add
   a build step without removing a dependency.
@@ -480,7 +520,11 @@ Three criteria sit below target, and are reported rather than softened:
   whether the last scheduled run succeeded. `/api/v1/pipeline/state`
   returns the last run stage by stage.
 - **Security:** the serving path connects as `aci_readonly`, which holds
-  `SELECT` on six views and no rights at all on the tables beneath them.
+  `SELECT` on eleven views and no rights at all on the tables beneath them.
+  Retrieval reads through `v_document_chunk` and `v_rag_vocab` for the same
+  reason — when it was first wired up it queried the base tables directly
+  and the role refused it, which is the confinement working rather than a
+  bug in it.
   A test fails if any module under `api/`, `semantic/` or `reporting/`
   names a base table, because such a query works for the owner and fails
   only in production.
