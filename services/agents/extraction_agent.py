@@ -47,6 +47,13 @@ class ExtractionAgent(Agent):
         def fetch_document() -> str:
             doc: SourceDocument = self.context["document"]
             res = fetch(doc.source_url)
+            if res.rate_limited:
+                # Not this document's fault, and not fixable by trying
+                # again in a moment. Record it so the loop stops instead
+                # of spending its whole budget on a wall.
+                self.context["rate_limited"] = True
+                doc.status = DocStatus.FAILED
+                raise RuntimeError(f"rate limited (HTTP {res.status})")
             if not res.ok:
                 doc.status = DocStatus.FAILED
                 raise RuntimeError(f"HTTP {res.status}")
@@ -123,6 +130,31 @@ class ExtractionAgent(Agent):
 
         if context.get("accepted") or context.get("quarantined"):
             return Decision(None, {}, "terminal state reached")
+
+        # A rate limit will not clear within this document's budget.
+        if context.get("rate_limited"):
+            return Decision(
+                "quarantine",
+                {"reason": "source is rate limiting; not retried"},
+                "rate limited",
+            )
+
+        # More generally: repeating a failing call is not reflection. Two
+        # failures of the same tool means the next attempt will fail too,
+        # and the budget is better spent recording why.
+        fetch_failures = sum(
+            1 for c in history if c.tool == "fetch_document" and not c.ok
+        )
+        if fetch_failures >= 2:
+            last = next(
+                (c.observation for c in reversed(history)
+                 if c.tool == "fetch_document" and not c.ok), "unknown"
+            )
+            return Decision(
+                "quarantine",
+                {"reason": f"could not fetch after {fetch_failures} attempts: {last}"},
+                "fetching is not going to start working",
+            )
 
         if "fetch_document" not in done:
             return Decision("fetch_document", {}, "need the bytes")

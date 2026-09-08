@@ -58,7 +58,8 @@ class AnalyticsAgent(Agent):
             rows = []
             for sr in series:
                 tot = [totals.get((p, sr.direction)) or 0.0 for p in sr.periods]
-                for pt in compute_trend(sr.periods, sr.sort_keys, sr.values, tot):
+                for pt in compute_trend(sr.periods, sr.sort_keys, sr.values, tot,
+                                        prior_year=sr.prior_year):
                     rows.append((sr, pt))
             self.context["trend_rows"] = rows
             return len(rows)

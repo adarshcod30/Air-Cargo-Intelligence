@@ -60,19 +60,66 @@ def robust_z_scores(values: list[float]) -> np.ndarray:
     return 0.6745 * (arr - median) / mad
 
 
+def trim_leading_zeros(
+    periods: list[str], values: list[float]
+) -> tuple[list[str], list[float]]:
+    """Drop the run of zeros a series opens with.
+
+    Those zeros are almost always "before this route existed" rather than
+    "cargo collapsed to nothing", and leaving them in makes the launch
+    itself register as the anomaly.
+    """
+    first = next((i for i, v in enumerate(values) if v > 0), len(values))
+    return periods[first:], values[first:]
+
+
 def detect_statistical(
-    periods: list[str], values: list[float], threshold: float = 3.0, min_kg: float = 1000.0
+    periods: list[str], values: list[float], threshold: float = 3.0,
+    min_kg: float = 1000.0, min_baseline_kg: float = 10_000.0,
+    min_nonzero_fraction: float = 0.5, min_median_to_max: float = 0.15,
 ) -> list[AnomalyPoint]:
     """Flag points far from the series' own robust centre.
 
-    `min_kg` exists because percentage deviation is meaningless at tiny
-    volumes: an airport moving 2kg one month and 20kg the next is a 900%
-    rise and not worth an alert.
+    Three guards, each from a false positive this produced on real data:
+
+    `min_kg` - percentage deviation is meaningless at tiny volumes. An
+    airport moving 2kg one month and 20kg the next is a 900% rise and
+    worth nobody's attention.
+
+    `min_baseline_kg` and `min_nonzero_fraction` - a series that is mostly
+    zeros has a median near zero, so *every* real value scores as a wild
+    outlier. SpiceJet's international cargo was reported as "+29,886%
+    versus an expected 14 tonnes" when what actually happened is that the
+    airline started flying international routes. That is a structural
+    break, not an anomaly, and reporting it as one is how an alert feed
+    loses its reader.
     """
+    periods, values = trim_leading_zeros(periods, values)
     if len(values) < 6:
         return []
-    z = robust_z_scores(values)
+
+    nonzero = [v for v in values if v > 0]
+    if len(nonzero) / len(values) < min_nonzero_fraction:
+        return []
+
     median = float(np.median(values))
+    if median < min_baseline_kg:
+        return []
+
+    # A robust z-score assumes a roughly stationary series. When the
+    # median is a tiny fraction of the maximum the series is not
+    # stationary at all - it is a ramp or a regime change, and every
+    # later point scores as an outlier against its own early history.
+    #
+    # SpiceJet's international cargo runs 0,0,0,0,0,0,9,14,1496,...,6506:
+    # an airline starting international routes. Its median is 14 tonnes
+    # against a maximum of 6,506, and reporting "+29,886% versus an
+    # expected 14 tonnes" is how an alert feed loses its reader.
+    peak = float(np.max(values))
+    if peak > 0 and median / peak < min_median_to_max:
+        return []
+
+    z = robust_z_scores(values)
     out: list[AnomalyPoint] = []
     for p, v, zi in zip(periods, values, z, strict=True):
         if abs(zi) < threshold or v < min_kg:
@@ -99,6 +146,7 @@ def detect_seasonal(
     """
     from services.analytics.trend import seasonal_decompose
 
+    periods, values = trim_leading_zeros(periods, values)
     decomposed = seasonal_decompose(values, period=period)
     if decomposed is None:
         return []

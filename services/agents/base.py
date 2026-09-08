@@ -33,6 +33,10 @@ from services.common.models import AgentRun, ToolCall
 
 log = get_logger(__name__)
 
+# How many identical failures before an agent stops trying. Two is enough
+# to distinguish a transient blip from a wall.
+_REPEAT_LIMIT = 2
+
 
 @dataclass
 class Tool:
@@ -104,6 +108,18 @@ class Agent:
                 log.debug(f"[{self.name}] policy stopped: {decision.reasoning}")
                 break
 
+            # Repeating a call that has already failed the same way twice
+            # is not reflection, it is a spin. Every agent gets this guard
+            # rather than each one reinventing it: a rate-limited fetch and
+            # a malformed query both used to consume the entire budget
+            # producing twelve identical error lines.
+            if self._is_spinning(run.calls, decision):
+                log.warning(
+                    f"[{self.name}] {decision.tool} has failed identically "
+                    f"{_REPEAT_LIMIT} times; stopping instead of retrying"
+                )
+                break
+
             tool = self.tools.get(decision.tool)
             if tool is None:
                 # A policy that hallucinates a tool name gets a corrective
@@ -145,6 +161,18 @@ class Agent:
 
     def summarise(self, context: dict[str, Any]) -> str:
         return ""
+
+    @staticmethod
+    def _is_spinning(history: list[ToolCall], decision: Decision) -> bool:
+        """Has this exact call already failed the same way repeatedly?"""
+        same = [
+            c for c in history
+            if c.tool == decision.tool and not c.ok and c.args == decision.args
+        ]
+        if len(same) < _REPEAT_LIMIT:
+            return False
+        # Identical observations mean nothing is changing between tries.
+        return len({c.observation[:120] for c in same[-_REPEAT_LIMIT:]}) == 1
 
     @staticmethod
     def _describe(result: Any) -> str:

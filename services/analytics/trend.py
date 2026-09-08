@@ -61,6 +61,7 @@ def compute_trend(
     sort_keys: list[int],
     values: list[float],
     totals: list[float] | None = None,
+    prior_year: list[float | None] | None = None,
 ) -> list[TrendPoint]:
     """Growth and share for one ordered series."""
     order = np.argsort(sort_keys)
@@ -68,12 +69,19 @@ def compute_trend(
     sort_keys = [sort_keys[i] for i in order]
     values = [values[i] for i in order]
     totals = [totals[i] for i in order] if totals else None
+    prior_year = [prior_year[i] for i in order] if prior_year else None
 
     lag = _lag_for(periods)
     points: list[TrendPoint] = []
     for i, (p, sk, v) in enumerate(zip(periods, sort_keys, values, strict=True)):
         pt = TrendPoint(period=p, sort_key=sk, tonnage_kg=v)
-        if i >= lag:
+        # Prefer the publisher's own prior-year figure when it gives one.
+        # AAI exposes only a handful of recent months, so a derived
+        # twelve-month lag would leave year-on-year growth permanently
+        # null even though the number is printed on the page.
+        if prior_year and prior_year[i]:
+            pt.yoy_pct = pct_change(v, prior_year[i])
+        elif i >= lag:
             pt.yoy_pct = pct_change(v, values[i - lag])
         if i >= 1:
             pt.mom_pct = pct_change(v, values[i - 1])

@@ -68,6 +68,11 @@ class FetchResult:
     declared_type: str | None
     sha256: str
     warnings: list[str]
+    # A rate limit is not a per-document failure - it is a statement about
+    # the whole source. Retrying the next document immediately makes it
+    # worse, so this is surfaced for the caller to act on.
+    rate_limited: bool = False
+    retry_after_s: float | None = None
 
     @property
     def size(self) -> int:
@@ -99,6 +104,8 @@ def fetch(url: str, *, client: httpx.Client | None = None) -> FetchResult:
     warnings: list[str] = []
     last_exc: Exception | None = None
     resp = None
+    rate_limited = False
+    retry_after: float | None = None
 
     try:
         for attempt in range(1, SETTINGS.max_retries + 1):
@@ -106,6 +113,19 @@ def fetch(url: str, *, client: httpx.Client | None = None) -> FetchResult:
                 resp = client.get(url)
                 if resp.status_code < 400:
                     break
+                if resp.status_code == 429:
+                    # Honour the server's own guidance when it gives any,
+                    # and back off exponentially when it does not.
+                    rate_limited = True
+                    header = resp.headers.get("retry-after")
+                    try:
+                        retry_after = float(header) if header else None
+                    except ValueError:
+                        retry_after = None
+                    wait = retry_after or min(60.0, 2.0 ** attempt)
+                    warnings.append(f"attempt {attempt}: HTTP 429, waiting {wait:.0f}s")
+                    time.sleep(wait)
+                    continue
                 warnings.append(f"attempt {attempt}: HTTP {resp.status_code}")
             except Exception as exc:
                 last_exc = exc
@@ -116,6 +136,7 @@ def fetch(url: str, *, client: httpx.Client | None = None) -> FetchResult:
             return FetchResult(
                 url, False, 0, b"", "none", None, "",
                 warnings + [f"exhausted retries: {last_exc}"],
+                rate_limited=rate_limited, retry_after_s=retry_after,
             )
 
         payload = resp.content
@@ -134,7 +155,11 @@ def fetch(url: str, *, client: httpx.Client | None = None) -> FetchResult:
             warnings.append("served HTML for a non-HTML URL - likely an error page")
 
         ok = resp.status_code < 400 and bool(payload)
-        result = FetchResult(url, ok, resp.status_code, payload, media, declared, digest, warnings)
+        result = FetchResult(
+            url, ok, resp.status_code, payload, media, declared, digest, warnings,
+            rate_limited=rate_limited or resp.status_code == 429,
+            retry_after_s=retry_after,
+        )
         log.debug(f"fetched {redact(url)} -> {result!r}")
         time.sleep(SETTINGS.polite_delay_s)
         return result

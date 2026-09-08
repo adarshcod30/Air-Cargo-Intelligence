@@ -20,6 +20,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from services.common.logging import get_logger
+
+log = get_logger(__name__)
+
 
 @dataclass
 class ForecastPoint:
@@ -63,12 +67,22 @@ def seasonal_naive(values: list[float], season: int, horizon: int) -> list[float
     return [values[-1]] * horizon
 
 
-def _fit_sarima(values: list[float], season: int, horizon: int):
-    """SARIMA point forecast plus an 80% interval, or None."""
+def _fit_sarima(values: list[float], season: int, horizon: int, *, debug: bool = False):
+    """SARIMA point forecast plus an 80% interval, or None.
+
+    A seasonal period of 1 means "no seasonality", but statsmodels
+    rejects `seasonal_order=(1,0,0,1)` outright: periodicity must exceed
+    1. Annual and fiscal series arrive here with season=1, so this
+    silently failed on every one of them and the baseline always won by
+    default rather than on merit.
+    """
     try:
         from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-        seasonal_order = (1, 0, 0, season) if len(values) >= 2 * season else (0, 0, 0, 0)
+        if season > 1 and len(values) >= 2 * season:
+            seasonal_order = (1, 0, 0, season)
+        else:
+            seasonal_order = (0, 0, 0, 0)      # plain ARIMA
         model = SARIMAX(
             np.asarray(values, dtype=float),
             order=(1, 1, 1), seasonal_order=seasonal_order,
@@ -83,7 +97,11 @@ def _fit_sarima(values: list[float], season: int, horizon: int):
             [float(x) for x in np.asarray(ci)[:, 0]],
             [float(x) for x in np.asarray(ci)[:, 1]],
         )
-    except Exception:
+    except Exception as exc:
+        # A bare `except: return None` hid an invalid seasonal_order for
+        # a long time, so the reason is surfaced when asked for.
+        if debug:
+            log.warning(f"SARIMA fit failed: {type(exc).__name__}: {exc}")
         return None
 
 

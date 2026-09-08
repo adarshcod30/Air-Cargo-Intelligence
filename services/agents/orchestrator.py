@@ -151,14 +151,37 @@ class Pipeline:
         return docs
 
     def _extract_all(self, docs: list[SourceDocument]) -> list[CargoFact]:
+        """Extract every document, but stop early if the source gives up.
+
+        A circuit breaker matters here because these are public endpoints
+        with real limits. Grinding through 146 documents that are all
+        being refused wastes time and is rude to the publisher, so a run
+        of consecutive rate limits aborts the source with a clear message
+        rather than completing as a long list of failures.
+        """
         facts: list[CargoFact] = []
+        consecutive_rate_limits = 0
         for i, doc in enumerate(docs, start=1):
+            if consecutive_rate_limits >= 3:
+                remaining = len(docs) - i + 1
+                log.error(
+                    f"circuit breaker: {consecutive_rate_limits} consecutive rate "
+                    f"limits, abandoning {remaining} remaining document(s). "
+                    f"Wait for the limit to reset and re-run."
+                )
+                self.report.documents_quarantined += remaining
+                break
             label = doc.hints.get("title") or redact(doc.source_url).rsplit("/", 1)[-1]
             log.info(f"--- document {i}/{len(docs)}: {label[:80]}")
             agent = ExtractionAgent(store=self.store)
             run = agent.run(f"extract cargo facts from {redact(doc.source_url)}", document=doc)
             self.report.runs.append(run)
             self.store.record(doc)
+
+            if agent.context.get("rate_limited"):
+                consecutive_rate_limits += 1
+            else:
+                consecutive_rate_limits = 0
 
             if run.succeeded and agent.context.get("best"):
                 best = agent.context["best"]
