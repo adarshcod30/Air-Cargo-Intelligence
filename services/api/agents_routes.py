@@ -146,6 +146,13 @@ def stats(session: Session = Depends(get_session)) -> dict:
         SELECT count(*) AS runs, sum(steps) AS steps,
                count(DISTINCT trace_id) AS traces,
                sum(input_tokens + output_tokens) AS tokens,
+               -- Runs carrying a measurement, so the console can say what
+               -- the token total covers. Runs written before per-run
+               -- accounting existed hold a genuine zero, and a sum over
+               -- them reads as a spend of nothing rather than as no
+               -- reading at all.
+               sum(CASE WHEN input_tokens + output_tokens > 0 THEN 1 ELSE 0 END)
+                   AS runs_with_usage,
                sum(CASE WHEN succeeded THEN 1 ELSE 0 END) AS succeeded
         FROM v_agent_run
     """)).mappings().first()

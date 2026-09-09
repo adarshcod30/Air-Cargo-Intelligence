@@ -215,6 +215,11 @@ class AgentRun:
     result_summary: str = ""
     started_at: datetime = field(default_factory=utcnow)
     finished_at: datetime | None = None
+    # Tokens this run spent, not the client's running total. Held on the run
+    # because every caller that persists a trace would otherwise have to
+    # remember to fetch it, and the one that forgot stamped 230 runs with
+    # zero while the console advertised model tokens as a headline figure.
+    usage: dict[str, int] = field(default_factory=dict)
 
     def record(self, call: ToolCall) -> None:
         self.calls.append(call)
@@ -240,4 +245,5 @@ class AgentRun:
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "calls": [c.to_dict() for c in self.calls],
+            "usage": dict(self.usage),
         }

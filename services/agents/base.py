@@ -79,6 +79,35 @@ class Policy(Protocol):
     ) -> Decision: ...
 
 
+def _policy_usage(policy: Any) -> dict[str, int]:
+    """Every token spent during this run, whichever layer spent it.
+
+    Reading the policy's own counter misses the ones that matter most. The
+    insight agent plans with a heuristic policy and calls the model from
+    inside a tool to write prose, so a policy-level reading reports nothing
+    for the run that does the most talking. The Bedrock client is a
+    process-wide singleton, so asking it directly catches the planner and
+    the narrator alike.
+
+    A policy carrying its own counter still wins, which keeps the injected
+    policies in the tests measurable without a live client.
+    """
+    u = getattr(policy, "usage", None)
+    if isinstance(u, dict) and u:
+        return dict(u)
+    try:
+        from services.common.bedrock import peek_usage
+        return peek_usage()
+    except Exception:
+        return {}
+
+
+def _usage_delta(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
+    if not after:
+        return {}
+    return {k: int(after.get(k, 0)) - int(before.get(k, 0)) for k in after}
+
+
 class Agent:
     """Goal-directed, tool-using, budget-bounded, and fully traced."""
 
@@ -103,6 +132,10 @@ class Agent:
         """Drive the loop until the policy stops or the budget runs out."""
         self.context = dict(context)
         run = AgentRun(agent=self.name, goal=goal, policy=self.policy.name)
+        # A snapshot, because the client's counter is cumulative and one
+        # policy object serves several runs. The difference is what this
+        # run cost; the total is what the process cost.
+        before_usage = _policy_usage(self.policy)
         log.info(f"[{self.name}] goal: {redact(goal)}  (policy={self.policy.name})")
 
         for step in range(self.max_steps):
@@ -162,6 +195,7 @@ class Agent:
                 break
 
         succeeded = self.is_goal_met(self.context)
+        run.usage = _usage_delta(before_usage, _policy_usage(self.policy))
         return run.finish(succeeded, self.summarise(self.context))
 
     # -- subclass hooks ----------------------------------------------------

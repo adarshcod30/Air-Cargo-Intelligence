@@ -757,6 +757,15 @@ async function loadAgents() {
       ['Runs', int(t.runs)], ['Steps', int(t.steps)], ['Pipelines', int(t.traces)],
       ['Succeeded', int(t.succeeded)], ['Model tokens', int(t.tokens || 0)],
     ].map(([l, v]) => `<div class="stat"><div class="s-value">${v}</div><div class="s-label">${l}</div></div>`).join('');
+
+    // A zero here means no reading, not a run that spent nothing. Saying
+    // which runs the total covers is the difference between a figure and
+    // a number.
+    const measured = Number(t.runs_with_usage || 0), runs = Number(t.runs || 0);
+    $('#agent-token-note').innerHTML = measured < runs
+      ? `Token counts cover ${int(measured)} of ${int(runs)} runs. Earlier runs `
+        + `predate per-run accounting and are recorded as unmeasured, not as zero.`
+      : '';
     $('#nav-agent-count').textContent = int(t.runs);
 
     const maxCalls = Math.max(...s.tools.map((x) => x.calls), 1);

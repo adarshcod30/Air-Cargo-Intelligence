@@ -91,7 +91,10 @@ def persist_run(
 ) -> int:
     """Write one completed trace. Returns the new agent_run_id."""
     payload = run.to_dict()
-    if usage:
+    # The run's own figure wins. The parameter stays for callers that
+    # measure usage outside the loop, but it must not overwrite a number
+    # the agent actually recorded.
+    if usage and not payload.get("usage"):
         payload["usage"] = usage
     row, steps = _row_from_dict(payload, trace_id)
     row.steps_rel = steps

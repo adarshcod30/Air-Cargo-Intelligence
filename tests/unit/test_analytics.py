@@ -604,3 +604,73 @@ class TestOneEventOneAlert:
         (a,) = detect_structural(per, vals)
         assert a.observed_kg == 460.0
         assert a.expected_kg > 0, "the level it had been running at"
+
+
+class TestTokenAccounting:
+    """The console advertises model tokens, so the number has to be real."""
+
+    def _agent(self, policy):
+        from services.agents.base import Agent
+
+        class Tiny(Agent):
+            name = "tiny"
+
+            def __init__(self, pol):
+                super().__init__(pol, max_steps=2)
+                self.tool("noop", "Does nothing.")(lambda: "done")
+
+            def is_goal_met(self, ctx):
+                return bool(ctx.get("done"))
+
+        return Tiny(policy)
+
+    def test_a_run_records_what_it_spent_not_the_running_total(self):
+        """The client counter is cumulative and one policy serves many runs.
+
+        Reporting the total on every run would multiply one spend by the
+        number of runs that happened to follow it.
+        """
+        from services.agents.base import Decision
+
+        class Metered:
+            name = "llm"
+            def __init__(self):
+                self.usage = {"input_tokens": 0, "output_tokens": 0}
+            def decide(self, goal, tools, history, context):
+                self.usage["input_tokens"] += 10
+                self.usage["output_tokens"] += 4
+                return Decision(None, {}, "stop", policy="llm")
+
+        pol = Metered()
+        first = self._agent(pol).run("one")
+        second = self._agent(pol).run("two")
+
+        assert first.usage == {"input_tokens": 10, "output_tokens": 4}
+        assert second.usage == {"input_tokens": 10, "output_tokens": 4}
+        assert pol.usage == {"input_tokens": 20, "output_tokens": 8}
+
+    def test_a_heuristic_run_reports_nothing_rather_than_zero_tokens(self):
+        """It called no model. An empty dict says that; 0 looks like a reading."""
+        from services.agents.base import Decision
+
+        class Plain:
+            name = "heuristic"
+            def decide(self, goal, tools, history, context):
+                return Decision(None, {}, "stop", policy="heuristic")
+
+        assert self._agent(Plain()).run("x").usage == {}
+
+    def test_usage_survives_into_the_persisted_row(self):
+        """The trace writer reads d['usage']; to_dict has to carry it.
+
+        Both callers of persist_runs omit the usage argument, so if the run
+        does not carry its own figure nothing does, and every row is
+        stamped zero.
+        """
+        from services.common.models import AgentRun
+        from services.warehouse.traces import _row_from_dict
+
+        run = AgentRun(agent="a", goal="g", policy="llm")
+        run.usage = {"input_tokens": 120, "output_tokens": 30}
+        row, _ = _row_from_dict(run.finish(True, "ok").to_dict(), "trace-1")
+        assert (row.input_tokens, row.output_tokens) == (120, 30)

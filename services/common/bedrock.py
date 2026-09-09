@@ -242,6 +242,16 @@ _default: BedrockClient | None = None
 _default_lock = threading.Lock()
 
 
+def peek_usage() -> dict[str, int]:
+    """Token counters without constructing a client.
+
+    Called on every agent run, including runs in processes that never touch
+    Bedrock, so it must not be the thing that creates a client or fails
+    when no credentials exist.
+    """
+    return _default.usage.to_dict() if _default is not None else {}
+
+
 def get_client() -> BedrockClient:
     global _default
     if _default is None:
