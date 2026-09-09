@@ -166,6 +166,12 @@
         <footer class="panel-foot" id="airport-foot"></footer>
       </article>
 
+      <article class="panel">
+        <header class="panel-head"><div><h2>More flights, or fuller flights?</h2>
+          <p class="panel-sub">Freight is flights multiplied by the tonnes each one carries, so a year&rsquo;s change splits exactly between the two. They need different responses: more flights needs slots and stands, fuller flights needs handling and warehousing.</p></div></header>
+        <div class="panel-body" id="decomposition"><div class="loading">…</div></div>
+      </article>
+
       <div class="grid two">
         <article class="panel">
           <header class="panel-head"><div><h2>Reading this airport</h2>
@@ -206,6 +212,22 @@
         <footer class="panel-foot">Each airport&rsquo;s change measured against the <em>national</em> base, so
           the contributions add up to the national figure rather than merely ranking movers. A small
           airport doubling has a spectacular growth rate and a negligible contribution.</footer>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><h2>Cargo intensity by airport</h2>
+            <p class="panel-sub">How much freight each departure actually lifted, and how much rode alongside each passenger. Volume and intensity are different things: the busiest airport is not always the most cargo-dense.</p></div>
+          <div class="controls">
+            <select id="ae-direction" class="sel" aria-label="Direction">
+              <option value="TOTAL">All freight</option>
+              <option value="INTERNATIONAL">International</option>
+              <option value="DOMESTIC">Domestic</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="airport-efficiency"><div class="loading">loading…</div></div>
+        <footer class="panel-foot">Freight, flights and passengers taken from the same publisher&rsquo;s release for the same month.</footer>
       </article>
 
       <div class="grid two">

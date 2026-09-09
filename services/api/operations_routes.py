@@ -221,3 +221,104 @@ def metric_catalogue(session: Session = Depends(get_session)) -> dict:
         GROUP BY metric, unit ORDER BY observations DESC
     """)).mappings().all()
     return {"rows": [dict(r) for r in rows], "row_count": len(rows)}
+
+
+@router.get("/airport-efficiency")
+def airport_efficiency(
+    iata: str | None = Query(None, min_length=3, max_length=3),
+    direction: str = Query("TOTAL", pattern="^(INTERNATIONAL|DOMESTIC|TOTAL)$"),
+    period: str | None = Query(None, description="ISO month; defaults to the latest held"),
+    limit: int = Query(40, ge=1, le=300),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Freight, flights and passengers for the same airport and month.
+
+    Tonnage cannot distinguish an airport that grew by gaining flights from
+    one that grew by filling the flights it already had. Tonnes per flight
+    can, and the two have different operational consequences: the first
+    needs slots and stands, the second needs handling capacity.
+    """
+    where = ["direction = :dir", "tonnes_per_flight IS NOT NULL"]
+    params: dict = {"dir": direction, "lim": limit}
+    if iata:
+        where.append("airport_iata = :iata")
+        params["iata"] = iata.upper()
+    if period:
+        where.append("period = :period")
+        params["period"] = period
+    elif not iata:
+        # Latest month held, so a table without an airport filter is a
+        # snapshot rather than an arbitrary mixture of periods.
+        where.append("sort_key = (SELECT max(sort_key) FROM v_airport_efficiency "
+                     "WHERE direction = :dir AND tonnes_per_flight IS NOT NULL)")
+    clause = "WHERE " + " AND ".join(where)
+
+    rows = session.execute(text(f"""
+        SELECT airport_iata, airport_name, period, direction,
+               freight_mt, movements, pax,
+               tonnes_per_flight, kg_per_pax, pax_per_flight
+        FROM v_airport_efficiency {clause}
+        ORDER BY sort_key DESC, freight_mt DESC
+        LIMIT :lim
+    """), params).mappings().all()
+    return {"rows": [dict(r) for r in rows], "row_count": len(rows)}
+
+
+@router.get("/growth-decomposition")
+def growth_decomposition(
+    iata: str = Query(..., min_length=3, max_length=3),
+    direction: str = Query("TOTAL", pattern="^(INTERNATIONAL|DOMESTIC|TOTAL)$"),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Did cargo grow because of more flights, or fuller flights?
+
+    Freight is flights times tonnes per flight, so its change decomposes
+    exactly into a capacity effect and an intensity effect. The two carry
+    different consequences - more flights needs slots and stands, fuller
+    flights needs handling and warehousing - and tonnage alone reports
+    neither.
+    """
+    rows = session.execute(text("""
+        SELECT period, sort_key, freight_mt, movements, tonnes_per_flight
+        FROM v_airport_efficiency
+        WHERE airport_iata = :iata AND direction = :dir
+          AND tonnes_per_flight IS NOT NULL
+        ORDER BY sort_key
+    """), {"iata": iata.upper(), "dir": direction}).mappings().all()
+    if len(rows) < 13:
+        return {"detail": "need at least 13 months to compare like for like"}
+
+    now, then = rows[-1], None
+    y, m = now["period"].split("-")
+    target = f"{int(y) - 1}-{m}"
+    for r in rows:
+        if r["period"] == target:
+            then = r
+            break
+    if then is None:
+        return {"detail": f"no comparable month {target}"}
+
+    d_freight = float(now["freight_mt"]) - float(then["freight_mt"])
+    # Holding intensity at last year's level isolates what extra flights
+    # alone would have delivered; the remainder is the intensity effect.
+    flights_effect = (float(now["movements"]) - float(then["movements"])) * float(then["tonnes_per_flight"])
+    intensity_effect = d_freight - flights_effect
+
+    return {
+        "airport_iata": iata.upper(),
+        "direction": direction,
+        "period_now": now["period"],
+        "period_then": then["period"],
+        "freight_now_mt": round(float(now["freight_mt"]), 1),
+        "freight_then_mt": round(float(then["freight_mt"]), 1),
+        "change_mt": round(d_freight, 1),
+        "change_pct": round(100.0 * d_freight / float(then["freight_mt"]), 2)
+        if float(then["freight_mt"]) else None,
+        "flights_now": int(now["movements"]),
+        "flights_then": int(then["movements"]),
+        "tonnes_per_flight_now": round(float(now["tonnes_per_flight"]), 3),
+        "tonnes_per_flight_then": round(float(then["tonnes_per_flight"]), 3),
+        "more_flights_mt": round(flights_effect, 1),
+        "fuller_flights_mt": round(intensity_effect, 1),
+        "driver": "more flights" if abs(flights_effect) > abs(intensity_effect) else "fuller flights",
+    }

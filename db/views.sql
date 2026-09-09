@@ -335,3 +335,53 @@ SELECT
     round(v.freight_tonnes / nullif(v.pax_carried, 0) * 1000, 3)    AS kg_freight_per_pax
 FROM pivoted v
 JOIN dim_period p ON p.period_id = v.period_id;
+
+
+-- ---------------------------------------------------------------------------
+-- Airport efficiency
+--
+-- Freight, flights and passengers for the same airport and month, from the
+-- same publisher's release. Tonnage alone cannot distinguish an airport whose
+-- cargo grew because it gained flights from one whose cargo grew because each
+-- flight carried more; these ratios can, and the two have entirely different
+-- operational consequences.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW v_airport_efficiency AS
+WITH freight AS (
+    SELECT airport_iata, period, sort_key, direction,
+           sum(tonnage_kg) / 1000.0 AS freight_mt
+    FROM v_cargo_fact
+    WHERE grain = 'AIRPORT' AND airport_iata IS NOT NULL
+    GROUP BY airport_iata, period, sort_key, direction
+),
+ops AS (
+    SELECT m.entity_key, p.period_label AS period, m.direction,
+           max(m.value) FILTER (WHERE m.metric = 'pax_carried')        AS pax,
+           max(m.value) FILTER (WHERE m.metric = 'aircraft_movements') AS movements
+    FROM fact_operating_metric m
+    JOIN dim_period p ON p.period_id = m.period_id
+    WHERE m.grain = 'AIRPORT'
+    GROUP BY m.entity_key, p.period_label, m.direction
+)
+SELECT
+    f.airport_iata,
+    a.airport_name,
+    f.period,
+    f.sort_key,
+    f.direction::text AS direction,
+    round(f.freight_mt::numeric, 1)                                   AS freight_mt,
+    o.movements,
+    o.pax,
+    -- How much each departure actually lifted.
+    round((f.freight_mt / nullif(o.movements, 0))::numeric, 3)        AS tonnes_per_flight,
+    -- Freight riding alongside each passenger, in kilograms. A rising value
+    -- with flat passengers is belly space being used harder.
+    round((f.freight_mt * 1000 / nullif(o.pax, 0))::numeric, 2)       AS kg_per_pax,
+    round((o.pax / nullif(o.movements, 0))::numeric, 1)               AS pax_per_flight
+FROM freight f
+JOIN ops o
+  ON o.entity_key = f.airport_iata
+ AND o.period = f.period
+ AND o.direction::text = f.direction::text
+LEFT JOIN dim_airport a ON a.iata_code = f.airport_iata;

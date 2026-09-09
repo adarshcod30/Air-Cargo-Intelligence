@@ -42,6 +42,7 @@ GRANT SELECT ON v_rag_vocab        TO aci_readonly;
 -- Operating metrics and the efficiency ratios derived from them.
 GRANT SELECT ON v_operating_metric TO aci_readonly;
 GRANT SELECT ON v_cargo_efficiency TO aci_readonly;
+GRANT SELECT ON v_airport_efficiency TO aci_readonly;
 GRANT SELECT ON v_pipeline_state   TO aci_readonly;
 
 -- A view runs with its owner's rights, so reading through them does not

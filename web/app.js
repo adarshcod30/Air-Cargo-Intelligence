@@ -341,6 +341,8 @@ async function drawAirport(iata) {
       ${myAnom.length ? `<p><strong>${myAnom.length}</strong> month${myAnom.length > 1 ? 's have' : ' has'}
          been flagged as departing from the seasonal pattern.</p>` : '<p>No month here has been flagged as unusual.</p>'}` : '<p>No history held.</p>';
 
+    drawDecomposition(iata, dir);
+
     $('#airport-alerts').innerHTML = myAnom.length
       ? myAnom.slice(0, 6).map((r) => `<div class="alert">
           <span class="alert-sev ${String(r.severity).toLowerCase() === 'high' ? 'high' : 'med'}"></span>
@@ -356,7 +358,30 @@ async function drawAirport(iata) {
 
 /* ---------------------------------------------------------- operations */
 
-async function loadOperations() { drawAttribution(); drawConcentration(); drawBelly(); drawEfficiency(); }
+async function loadOperations() {
+  drawAttribution(); drawAirportEfficiency(); drawConcentration(); drawBelly(); drawEfficiency();
+}
+
+async function drawAirportEfficiency() {
+  const el = $('#airport-efficiency');
+  el.innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const d = await api(`/api/v1/operations/airport-efficiency?limit=18&direction=${$('#ae-direction').value}`);
+    if (!d.rows.length) { el.innerHTML = '<div class="empty">no paired flight data</div>'; return; }
+    const maxT = Math.max(...d.rows.map((r) => Number(r.tonnes_per_flight) || 0), 0.01);
+    el.innerHTML = `<div class="rows">${d.rows.map((r) => `
+      <div class="row ae-row clickable" data-iata="${esc(r.airport_iata)}">
+        <span class="code">${esc(r.airport_iata)}</span>
+        <span class="name"><span class="name-main">${esc(r.airport_name || r.airport_iata)}</span>
+          <div class="alert-detail">${n0(r.freight_mt)} MT · ${n0(r.movements)} flights · ${n0(r.pax)} pax</div>
+          <div class="lf-bar"><span style="width:${(Number(r.tonnes_per_flight) / maxT) * 100}%"></span></div></span>
+        <span class="num">${Number(r.tonnes_per_flight).toFixed(2)} t</span>
+        <span class="num">${Number(r.kg_per_pax).toFixed(1)} kg</span>
+        <span class="alert-detail">${esc(prettyPeriod(r.period))}</span>
+      </div>`).join('')}</div>`;
+    $$('.ae-row', el).forEach((row) => on(row, 'click', () => openAirport(row.dataset.iata)));
+  } catch { el.innerHTML = '<div class="empty">could not load intensity</div>'; }
+}
 
 async function drawAttribution() {
   const el = $('#attribution');
@@ -468,6 +493,47 @@ async function drawEfficiency() {
     $('#eff-foot').innerHTML = 'Columns: load factor · tonnes per departure · mail share. '
       + 'A carrier lifting 20 tonnes a departure is flying freighters; one lifting under a tonne is selling belly space.';
   } catch { el.innerHTML = '<div class="empty">could not load efficiency</div>'; }
+}
+
+async function drawDecomposition(iata, direction) {
+  const el = $('#decomposition');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">…</div>';
+  try {
+    const d = await api(`/api/v1/operations/growth-decomposition?iata=${encodeURIComponent(iata)}&direction=${direction}`);
+    if (d.detail) { el.innerHTML = `<div class="empty">${esc(d.detail)}</div>`; return; }
+
+    // Both effects share one scale so the longer bar is the larger cause,
+    // which is the whole point of splitting them.
+    const span = Math.max(Math.abs(d.more_flights_mt), Math.abs(d.fuller_flights_mt), 1);
+    const bar = (label, value, note) => {
+      const pos = value >= 0;
+      const w = (Math.abs(value) / span) * 50;
+      return `<div class="decomp-bar">
+        <span class="decomp-label">${esc(label)}</span>
+        <span class="decomp-track"><span class="decomp-mid"></span>
+          <span class="decomp-fill ${pos ? 'pos' : 'neg'}"
+                style="${pos ? `left:50%;width:${w}%` : `right:50%;width:${w}%`}"></span></span>
+        <span class="decomp-val ${pos ? 'up' : 'down'}" style="color:${pos ? 'var(--teal)' : 'var(--rose)'}">
+          ${pos ? '+' : ''}${n0(value)} MT</span>
+      </div>
+      <p class="decomp-note" style="margin:-6px 0 0 140px">${esc(note)}</p>`;
+    };
+
+    const dirWord = d.change_mt >= 0 ? 'rose' : 'fell';
+    el.innerHTML = `<div class="decomp">
+      <p class="decomp-head">Between ${esc(prettyPeriod(d.period_then))} and ${esc(prettyPeriod(d.period_now))},
+        freight ${dirWord} from <strong>${n0(d.freight_then_mt)}</strong> to
+        <strong>${n0(d.freight_now_mt)}</strong> MT —
+        ${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%. That splits into:</p>
+      ${bar('More flights', d.more_flights_mt,
+            `${n0(d.flights_then)} → ${n0(d.flights_now)} flights`)}
+      ${bar('Fuller flights', d.fuller_flights_mt,
+            `${d.tonnes_per_flight_then} → ${d.tonnes_per_flight_now} tonnes per flight`)}
+      <p class="decomp-head" style="margin-top:4px">The larger cause was
+        <strong>${esc(d.driver)}</strong>.</p>
+    </div>`;
+  } catch { el.innerHTML = '<div class="empty">could not decompose this series</div>'; }
 }
 
 /* ----------------------------------------------------------- forecasts */
@@ -861,6 +927,7 @@ function init() {
   on('#airport-pick', 'change', (e) => drawAirport(e.target.value));
   on('#airport-direction', 'change', () => drawAirport($('#airport-pick').value));
   on('#attr-direction', 'change', drawAttribution);
+  on('#ae-direction', 'change', drawAirportEfficiency);
   on('#eff-direction', 'change', drawEfficiency);
   on('#fc-grain', 'change', loadForecasts);
   on('#fc-horizon', 'change', loadForecasts);
