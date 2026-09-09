@@ -146,12 +146,59 @@ def run_once(limit: int = 400, skip_ingest: bool = False) -> RunState:
         state.ok = all(s.ok for s in stages)
         state.finished_at = datetime.now(UTC).isoformat()
         STATE_PATH.write_text(json.dumps(asdict(state), indent=2))
+        _record_state(asdict(state))
         return state
     finally:
         _release_lock()
 
 
+def _record_state(payload: dict) -> None:
+    """Mirror the run outcome into the warehouse.
+
+    The file remains the record of last resort when the database is
+    unreachable; the row is the one the dashboard can actually read, since
+    the serving process runs somewhere the file does not exist.
+    """
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.orm import Session
+
+        from services.warehouse.loader import get_engine
+
+        with Session(get_engine()) as s:
+            s.execute(
+                text("""
+                    INSERT INTO pipeline_state (id, payload, recorded_at)
+                    VALUES (1, CAST(:p AS jsonb), now())
+                    ON CONFLICT (id) DO UPDATE
+                       SET payload = EXCLUDED.payload,
+                           recorded_at = EXCLUDED.recorded_at
+                """),
+                {"p": json.dumps(payload)},
+            )
+            s.commit()
+    except Exception as exc:
+        log.warning(f"could not record pipeline state: {type(exc).__name__}: {exc}")
+
+
 def last_state() -> dict | None:
+    """Prefer the stored row; fall back to the local file.
+
+    Order matters. The row is visible to whichever process is serving, and
+    the file only exists on the machine that ran the pipeline.
+    """
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.orm import Session
+
+        from services.api.deps import engine
+
+        with Session(engine()) as s:
+            row = s.execute(text("SELECT payload FROM v_pipeline_state")).scalar()
+        if row:
+            return row if isinstance(row, dict) else json.loads(row)
+    except Exception:
+        pass
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text())
     return None

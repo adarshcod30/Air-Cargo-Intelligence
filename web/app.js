@@ -1,126 +1,266 @@
 /* Air Cargo Intelligence — dashboard.
 
-   No framework and no build step: the API serves this directory directly,
-   so there is nothing to compile before the project runs. Every figure
-   rendered here arrives from the API already computed; this file formats
-   and lays out, it never calculates a cargo number.                       */
+   No framework and no build step: the API serves this directory, so there
+   is nothing to compile before the project runs. Charts are hand-drawn SVG
+   rather than a charting dependency, which keeps the page loading no third
+   party code and keeps the forecast band drawn exactly as intended.
+
+   This file formats and lays out. It never computes a cargo figure: every
+   number arrives from the API already calculated, and the one place that
+   could be tempted to derive one - the plain-language summaries - reads
+   fields the API returned rather than recomputing them.                   */
 
 'use strict';
 
 const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-/* Bind only if the element exists.
-
-   init() used to call addEventListener directly on every lookup, so a
-   single missing node threw and every loader after it never ran - the page
-   rendered its chrome and then sat on "loading…" forever. That is a real
-   deployment risk, not just a local one: a cached index.html served
-   alongside a fresh app.js produces exactly that mismatch. Degrading one
-   control is recoverable; losing the whole page is not.                  */
-const on = (sel, event, fn) => {
+const on = (sel, ev, fn) => {
   const el = typeof sel === 'string' ? $(sel) : sel;
-  if (el) el.addEventListener(event, fn);
+  if (el) el.addEventListener(ev, fn);
   return el;
 };
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 const api = async (path, opts) => {
   const res = await fetch(path, opts);
-  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
 };
 
-const num = (v, d = 1) =>
-  v === null || v === undefined || v === '' || Number.isNaN(Number(v))
-    ? '—'
-    : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const int = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString('en-IN'));
+const n1 = (v) => (v == null || v === '' || Number.isNaN(Number(v)))
+  ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const n0 = (v) => (v == null || Number.isNaN(Number(v)))
+  ? '—' : Math.round(Number(v)).toLocaleString('en-IN');
+const int = n0;
 
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* One scale for a whole axis, chosen from its largest value.
+
+   Formatting each tick independently produced an axis reading 1.1L, 1.0L,
+   88.8k, 76.5k - two different units stacked on one scale, which forces the
+   reader to convert in their head to see that the gaps are even. */
+const axisScale = (max) => {
+  const m = Math.abs(max);
+  if (m >= 1e5) return { div: 1e5, suffix: 'L' };   // lakh
+  if (m >= 1e3) return { div: 1e3, suffix: 'k' };
+  return { div: 1, suffix: '' };
+};
+const onScale = (v, sc) => {
+  const x = Number(v) / sc.div;
+  if (!Number.isFinite(x)) return '—';
+  return (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1)) + sc.suffix;
+};
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const prettyPeriod = (p) => {
+  const m = /^(\d{4})-(\d{2})$/.exec(p || '');
+  if (m) return `${MONTHS[+m[2] - 1]} ${m[1]}`;
+  const fy = /^(\d{4})-FY$/.exec(p || '');
+  if (fy) return `FY ${fy[1]}`;
+  return p || '—';
+};
 
 const ago = (iso) => {
   if (!iso) return 'unknown';
-  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (secs < 90) return 'just now';
-  if (secs < 5400) return `${Math.round(secs / 60)} min ago`;
-  if (secs < 172800) return `${Math.round(secs / 3600)} h ago`;
-  return `${Math.round(secs / 86400)} d ago`;
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 172800) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
 };
 
-/* ------------------------------------------------------------ routing -- */
+/* Plain language. A percentage on its own does not tell a reader what
+   changed relative to what, which was most of why the figures read as
+   opaque. */
+const plainDelta = (pct) => {
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return 'no comparable month a year earlier';
+  const dir = p >= 0 ? 'up' : 'down';
+  return `${dir} ${Math.abs(p).toFixed(1)}% on the same month last year`;
+};
+
+const plainAnomaly = (r) => {
+  const obs = Number(r.observed_mt), exp = Number(r.expected_mt);
+  const dev = Number(r.deviation_pct);
+  const dir = dev >= 0 ? 'far more' : 'far less';
+  return `Handled ${n1(obs)} MT in ${prettyPeriod(r.period)} — ${dir} than the `
+       + `${n1(exp)} MT its seasonal pattern implied.`;
+};
+
+/* ------------------------------------------------------------- routing */
 
 const VIEWS = {
   overview: ['Overview', 'Cargo throughput across Indian and international airports.'],
-  agents:   ['Agent console', 'What each agent decided, why, and which policy decided it.'],
-  intel:    ['Intelligence', 'Detected anomalies, forecasts and written explanations.'],
+  airport:  ['Airport detail', 'History, projection and flagged months for one airport.'],
+  forecast: ['Forecasts', 'Where the statistical models expect traffic to go, and how wrong they have been before.'],
+  alerts:   ['Alerts', 'Months that departed from the seasonal pattern, and why that matters.'],
   ask:      ['Ask the data', 'Questions answered by SQL over a governed semantic layer.'],
-  sources:  ['Provenance', 'Every figure traces to a published document.'],
+  brief:    ['Monthly brief', 'The standing report, generated from the same figures.'],
+  agents:   ['Agent console', 'What each agent decided, why, and which policy decided it.'],
+  sources:  ['Sources & health', 'Every figure traces to a published document.'],
 };
 
 const loaded = new Set();
 
 function show(view) {
+  if (!VIEWS[view]) view = 'overview';
   $$('.nav-item').forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
   $$('.view').forEach((s) => s.classList.toggle('is-active', s.dataset.view === view));
-  const [title, sub] = VIEWS[view] || VIEWS.overview;
+  const [title, sub] = VIEWS[view];
   $('#view-title').textContent = title;
   $('#view-sub').textContent = sub;
-  location.hash = view;
-
-  // Panels fetch on first reveal rather than all at once on load: the agent
-  // console alone is four queries, and most visits never open it.
+  if (location.hash.slice(1) !== view) location.hash = view;
   if (!loaded.has(view)) { loaded.add(view); (LOADERS[view] || (() => {}))(); }
+  window.scrollTo({ top: 0 });
 }
 
-/* ----------------------------------------------------------- overview -- */
+/* --------------------------------------------------------------- chart */
+
+/* History, projection and interval in one SVG.
+
+   The band is drawn first so the lines sit on top of it, and the forecast
+   line starts at the last observed point rather than floating detached -
+   a projection that does not visibly continue the series reads as an
+   unrelated second chart. */
+function seriesChart(history, forecast, anomalies = []) {
+  const W = 860, H = 320;
+  const pad = { l: 58, r: 18, t: 18, b: 42 };
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+
+  const hist = history.map((r) => ({ period: r.period, v: Number(r.tonnage_mt) }))
+                      .filter((p) => Number.isFinite(p.v));
+  const fc = forecast.map((r) => ({
+    period: r.period, v: Number(r.predicted_mt),
+    lo: Number(r.lower_mt), hi: Number(r.upper_mt),
+  })).filter((p) => Number.isFinite(p.v));
+
+  if (!hist.length) return '<div class="empty">no history for this selection</div>';
+
+  const all = [...hist.map((p) => p.period), ...fc.map((p) => p.period)];
+  const vals = [...hist.map((p) => p.v), ...fc.flatMap((p) => [p.lo, p.hi, p.v])]
+                 .filter(Number.isFinite);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const lo = Math.max(0, min - (max - min) * 0.12);
+  const hi = max + (max - min) * 0.12;
+
+  const x = (i) => pad.l + (all.length < 2 ? iw / 2 : (i / (all.length - 1)) * iw);
+  const y = (v) => pad.t + ih - ((v - lo) / (hi - lo || 1)) * ih;
+
+  const anomAt = new Map(anomalies.map((a) => [a.period, a]));
+
+  // y gridlines, all ticks on one scale
+  const sc = axisScale(hi);
+  let gridSvg = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    const yy = y(v);
+    gridSvg += `<line class="grid-line" x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}"/>`
+             + `<text class="ax-text" x="${pad.l - 8}" y="${yy + 3.5}" text-anchor="end">${onScale(v, sc)}</text>`;
+  }
+
+  // x labels. Thinning by modulo alone still collided, because the final
+  // label is always drawn and can land a few pixels from the previous one.
+  // Track the last x actually used and require real separation.
+  const every = Math.max(1, Math.ceil(all.length / 8));
+  const MIN_GAP = 62;
+  let xSvg = '';
+  let lastX = -Infinity;
+  all.forEach((p, i) => {
+    const isLast = i === all.length - 1;
+    if (i % every && !isLast) return;
+    const px = x(i);
+    if (px - lastX < MIN_GAP) {
+      // Keep the endpoint in preference to the tick before it: the end of
+      // the projection is the label a reader most wants anchored.
+      if (!isLast) return;
+      xSvg = xSvg.replace(/<text class="ax-text"[^>]*>[^<]*<\/text>$/, '');
+    }
+    lastX = px;
+    xSvg += `<text class="ax-text" x="${px}" y="${H - pad.b + 17}" text-anchor="middle">${esc(prettyPeriod(p))}</text>`;
+  });
+
+  const histPath = hist.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+
+  let bandSvg = '', fcPath = '', fcPts = '';
+  if (fc.length) {
+    const base = hist.length - 1;
+    const up = fc.map((p, i) => `${x(base + 1 + i).toFixed(1)},${y(p.hi).toFixed(1)}`);
+    const dn = fc.map((p, i) => `${x(base + 1 + i).toFixed(1)},${y(p.lo).toFixed(1)}`).reverse();
+    const anchor = `${x(base).toFixed(1)},${y(hist[base].v).toFixed(1)}`;
+    bandSvg = `<polygon class="band" points="${anchor} ${up.join(' ')} ${dn.join(' ')}"/>`;
+    fcPath = `M${anchor}` + fc.map((p, i) => `L${x(base + 1 + i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+    fcPts = fc.map((p, i) => `<circle class="pt-fc" cx="${x(base + 1 + i)}" cy="${y(p.v)}" r="3.5"/>`).join('');
+  }
+
+  const histPts = hist.map((p, i) => {
+    const a = anomAt.get(p.period);
+    return a
+      ? `<circle class="pt-anom" cx="${x(i)}" cy="${y(p.v)}" r="5"><title>${esc(plainAnomaly(a))}</title></circle>`
+      : `<circle class="pt-hist" cx="${x(i)}" cy="${y(p.v)}" r="2.4" opacity=".75"/>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Freight tonnage history and projection">
+    ${gridSvg}
+    ${bandSvg}
+    <path class="line-hist" d="${histPath}"/>
+    ${fcPath ? `<path class="line-fc" d="${fcPath}"/>` : ''}
+    ${histPts}${fcPts}
+    <line class="ax-line" x1="${pad.l}" y1="${pad.t + ih}" x2="${W - pad.r}" y2="${pad.t + ih}"/>
+    ${xSvg}
+  </svg>`;
+}
+
+const chartLegend = (hasFc, hasAnom) => `
+  <div class="key"><span class="swatch" style="background:var(--indigo)"></span> Observed</div>
+  ${hasFc ? '<div class="key"><span class="swatch dash"></span> Projected (SARIMA)</div>' : ''}
+  ${hasFc ? '<div class="key"><span class="swatch band" style="background:var(--saffron)"></span> 80% interval</div>' : ''}
+  ${hasAnom ? '<div class="key"><span class="swatch dot" style="background:var(--rose)"></span> Flagged month</div>' : ''}`;
+
+/* ------------------------------------------------------------ overview */
 
 async function loadOverview() {
   try {
     const h = await api('/api/v1/health');
     $('#kpis').innerHTML = [
-      ['Facts', int(h.facts), 'reconciled rows'],
-      ['Airports', int(h.airports), 'resolved to IATA'],
-      ['Airlines', int(h.airlines), 'carriers'],
-      ['Periods', int(h.periods), 'months and years'],
-    ].map(([l, v, n]) => `
-      <div class="kpi">
-        <div class="k-label">${l}</div>
-        <div class="k-value">${v}</div>
-        <div class="k-note">${n}</div>
+      ['Facts held', int(h.facts), 'each traced to a document', true],
+      ['Airports', int(h.airports), 'resolved to IATA codes', false],
+      ['Airlines', int(h.airlines), 'carriers tracked', false],
+      ['Periods', int(h.periods), 'months and fiscal years', false],
+    ].map(([l, v, note, accent]) => `
+      <div class="kpi${accent ? ' accent' : ''}">
+        <div class="k-label">${l}</div><div class="k-value">${v}</div><div class="k-note">${note}</div>
       </div>`).join('');
-  } catch { $('#kpis').innerHTML = '<div class="empty">API unreachable</div>'; }
-
-  loadRankings();
-  loadAirlines();
+  } catch { $('#kpis').innerHTML = '<div class="empty">could not reach the API</div>'; }
+  loadRankings(); loadAirlines();
 }
 
 async function loadRankings() {
   const el = $('#rankings');
-  const dir = $('#rank-direction').value;
-  const order = $('#rank-order').value;
   el.innerHTML = '<div class="loading">loading…</div>';
   try {
-    const d = await api(`/api/v1/airports/rankings?limit=10&direction=${dir}&order=${order}`);
-    if (!d.rows.length) { el.innerHTML = '<div class="empty">no rows</div>'; return; }
+    const d = await api(`/api/v1/airports/rankings?limit=10&direction=${$('#rank-direction').value}&order=${$('#rank-order').value}`);
+    if (!d.rows.length) return void (el.innerHTML = '<div class="empty">no rows for this selection</div>');
     const max = Math.max(...d.rows.map((r) => Number(r.tonnage_mt) || 0));
     el.innerHTML = `<div class="rows">${d.rows.map((r, i) => {
       const g = Number(r.growth_yoy_pct);
       const cls = Number.isFinite(g) ? (g >= 0 ? 'up' : 'down') : '';
       const sign = Number.isFinite(g) && g >= 0 ? '+' : '';
-      return `<div class="row rank-row">
+      return `<div class="row rank-row clickable" data-iata="${esc(r.airport_iata || '')}"
+                   title="${esc(r.airport_name)} — ${esc(plainDelta(g))}">
         <span class="rank">${i + 1}</span>
         <span class="code">${esc(r.airport_iata || '—')}</span>
-        <span class="name" title="${esc(r.airport_name)}">${esc(r.airport_name)}
+        <span class="name"><span class="name-main">${esc(r.airport_name)}</span>
           <div class="bar-wrap"><div class="bar" style="width:${max ? (Number(r.tonnage_mt) / max) * 100 : 0}%"></div></div>
         </span>
-        <span class="num">${num(r.tonnage_mt)}</span>
+        <span class="num">${n1(r.tonnage_mt)}</span>
         <span class="delta ${cls}">${Number.isFinite(g) ? sign + g.toFixed(1) + '%' : '—'}</span>
       </div>`;
     }).join('')}</div>`;
-    $('#rank-note').textContent = d.explanation ? d.explanation.slice(0, 150) : '';
+    $$('.rank-row', el).forEach((row) => on(row, 'click', () => {
+      if (row.dataset.iata) openAirport(row.dataset.iata);
+    }));
   } catch { el.innerHTML = '<div class="empty">could not load rankings</div>'; }
 }
 
@@ -128,116 +268,241 @@ async function loadAirlines() {
   const el = $('#airline-chart');
   try {
     const d = await api('/api/v1/airlines/share?limit=7');
-    if (!d.rows.length) { el.innerHTML = '<div class="empty">no rows</div>'; return; }
+    if (!d.rows.length) return void (el.innerHTML = '<div class="empty">no rows</div>');
     const max = Math.max(...d.rows.map((r) => Number(r.tonnage_mt)));
-    const rowH = 30, pad = 4;
-    const h = d.rows.length * rowH + pad * 2;
-    // Inline SVG rather than a charting library: one bar chart does not
-    // justify a dependency, and this keeps the page loading no external code.
-    el.innerHTML = `<div class="chart"><svg viewBox="0 0 480 ${h}" role="img"
-        aria-label="Airline cargo share">
+    const rowH = 34, h = d.rows.length * rowH + 10;
+    el.innerHTML = `<div class="chart"><svg viewBox="0 0 500 ${h}" role="img" aria-label="Airline cargo share">
       ${d.rows.map((r, i) => {
-        const y = pad + i * rowH;
-        const w = max ? (Number(r.tonnage_mt) / max) * 215 : 0;
-        return `
-          <text class="b-label" x="0" y="${y + 13}">${esc(String(r.airline_name).slice(0, 18))}</text>
-          <rect class="b-rect" x="120" y="${y + 4}" width="${w}" height="13" rx="2.5" opacity="${1 - i * 0.09}"/>
-          <text class="b-value" x="${120 + w + 6}" y="${y + 14}">${num(r.tonnage_mt, 0)}</text>`;
+        const y = 6 + i * rowH, w = max ? (Number(r.tonnage_mt) / max) * 230 : 0;
+        return `<text class="b-label" x="0" y="${y + 15}">${esc(String(r.airline_name).slice(0, 17))}</text>
+          <rect class="b-rect" x="150" y="${y + 4}" width="${w}" height="15" rx="3" opacity="${1 - i * 0.085}"/>
+          <text class="b-value" x="${150 + w + 8}" y="${y + 16}">${n0(r.tonnage_mt)}</text>`;
       }).join('')}
     </svg></div>`;
   } catch { el.innerHTML = '<div class="empty">could not load chart</div>'; }
 }
 
-/* ----------------------------------------------------- agent console -- */
+/* ------------------------------------------------------ airport detail */
+
+let airportList = [];
+
+async function loadAirportView() {
+  try {
+    const d = await api('/api/v1/airports/rankings?limit=40');
+    airportList = d.rows.filter((r) => r.airport_iata);
+    $('#airport-pick').innerHTML = airportList
+      .map((r) => `<option value="${esc(r.airport_iata)}">${esc(r.airport_iata)} — ${esc(r.airport_name)}</option>`).join('');
+    if (airportList.length) drawAirport(airportList[0].airport_iata);
+  } catch { $('#airport-chart').innerHTML = '<div class="empty">could not load airports</div>'; }
+}
+
+function openAirport(iata) {
+  show('airport');
+  const apply = () => { $('#airport-pick').value = iata; drawAirport(iata); };
+  airportList.length ? apply() : loadAirportView().then(apply);
+}
+
+async function drawAirport(iata) {
+  const dir = $('#airport-direction').value;
+  $('#airport-chart').innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const [trend, fc, anom] = await Promise.all([
+      api(`/api/v1/airports/trend?iata=${encodeURIComponent(iata)}&direction=${dir}`),
+      api('/api/v1/forecasts?grain=AIRPORT&limit=200').catch(() => ({ rows: [] })),
+      api('/api/v1/anomalies?grain=AIRPORT&limit=200').catch(() => ({ rows: [] })),
+    ]);
+
+    const mine = fc.rows.filter((r) => r.entity_key === iata && r.direction === dir)
+                       .sort((a, b) => a.horizon - b.horizon);
+    const myAnom = anom.rows.filter((r) => r.entity_key === iata && r.direction === dir);
+    const meta = airportList.find((r) => r.airport_iata === iata);
+
+    $('#airport-title').textContent = meta ? `${meta.airport_name} (${iata})` : iata;
+    $('#airport-chart').innerHTML = seriesChart(trend.rows, mine, myAnom);
+    $('#airport-legend').innerHTML = chartLegend(mine.length > 0, myAnom.length > 0);
+
+    const model = mine[0]?.model, mape = Number(mine[0]?.backtest_mape_pct);
+    $('#airport-foot').innerHTML = mine.length
+      ? `Projected with <strong>${esc(model)}</strong>. In backtesting its predictions were typically within
+         <strong>${mape.toFixed(1)}%</strong> of what actually happened.`
+      : 'No projection for this series — too few periods to fit and validate a model.';
+
+    const last = trend.rows[trend.rows.length - 1];
+    const first = trend.rows[0];
+    $('#airport-summary').innerHTML = last ? `
+      <p>In <strong>${esc(prettyPeriod(last.period))}</strong> this airport handled
+         <strong>${n1(last.tonnage_mt)} MT</strong> of freight — ${esc(plainDelta(last.growth_yoy_pct))}.</p>
+      <p>The series held here runs from ${esc(prettyPeriod(first.period))} to
+         ${esc(prettyPeriod(last.period))}, ${trend.rows.length} months in total.</p>
+      ${mine.length ? `<p>The model projects <strong>${n1(mine[0].predicted_mt)} MT</strong> for
+         ${esc(prettyPeriod(mine[0].period))}, and would not be surprised by anything between
+         ${n1(mine[0].lower_mt)} and ${n1(mine[0].upper_mt)} MT.</p>` : ''}
+      ${myAnom.length ? `<p><strong>${myAnom.length}</strong> month${myAnom.length > 1 ? 's have' : ' has'}
+         been flagged as departing from the seasonal pattern.</p>` : '<p>No month here has been flagged as unusual.</p>'}` : '<p>No history held.</p>';
+
+    $('#airport-alerts').innerHTML = myAnom.length
+      ? myAnom.slice(0, 6).map((r) => `<div class="alert">
+          <span class="alert-sev ${String(r.severity).toLowerCase() === 'high' ? 'high' : 'med'}"></span>
+          <div class="alert-body">
+            <div class="alert-top"><span class="alert-name">${esc(prettyPeriod(r.period))}</span>
+              <span class="pill ${String(r.severity).toLowerCase() === 'high' ? 'bad' : 'warn'}">${esc(r.severity)}</span>
+              <span class="pill">${esc(r.method)}</span></div>
+            <div class="alert-plain">${esc(plainAnomaly(r))}</div>
+          </div></div>`).join('')
+      : '<div class="empty">Nothing flagged for this airport.</div>';
+  } catch { $('#airport-chart').innerHTML = '<div class="empty">could not load this airport</div>'; }
+}
+
+/* ----------------------------------------------------------- forecasts */
+
+async function loadForecasts() {
+  const el = $('#forecasts');
+  el.innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const d = await api(`/api/v1/forecasts?limit=60&grain=${$('#fc-grain').value}&horizon=${$('#fc-horizon').value}`);
+    $('#nav-forecast-count').textContent = d.row_count ? int(d.row_count) : '';
+
+    const mapes = d.rows.map((r) => Number(r.backtest_mape_pct)).filter(Number.isFinite).sort((a, b) => a - b);
+    const median = mapes.length ? mapes[Math.floor(mapes.length / 2)] : null;
+    const models = [...new Set(d.rows.map((r) => r.model))];
+    $('#forecast-kpis').innerHTML = [
+      ['Series projected', int(d.row_count), 'at this horizon', true],
+      ['Typical error', median == null ? '—' : median.toFixed(1) + '%', 'median backtest MAPE', false],
+      ['Models used', models.length, models.join(', ') || '—', false],
+      ['Interval', '80%', 'four times in five', false],
+    ].map(([l, v, note, a]) => `<div class="kpi${a ? ' accent' : ''}">
+        <div class="k-label">${l}</div><div class="k-value">${v}</div><div class="k-note">${esc(note)}</div></div>`).join('');
+
+    if (!d.rows.length) return void (el.innerHTML = '<div class="empty">no forecasts at this horizon</div>');
+    el.innerHTML = `<div class="rows">${d.rows.map((r) => {
+      const mape = Number(r.backtest_mape_pct);
+      const good = Number.isFinite(mape) && mape <= 12;
+      return `<div class="row fc-row clickable" data-iata="${esc(r.grain === 'AIRPORT' ? r.entity_key : '')}">
+        <span class="code">${esc(r.entity_key)}</span>
+        <span class="name"><span class="name-main">${esc(r.entity_name || r.entity_key)}</span>
+          <div class="alert-detail">${esc(prettyPeriod(r.period))} · ${esc(String(r.direction).toLowerCase())} · ${esc(r.model)}</div>
+        </span>
+        <span class="num">${n1(r.predicted_mt)} <span class="unit" style="color:var(--muted)">MT</span></span>
+        <span class="alert-detail">${n0(r.lower_mt)} – ${n0(r.upper_mt)}</span>
+        <span class="pill ${good ? 'ok' : 'warn'}" title="Past predictions were typically within this much of the truth">±${Number.isFinite(mape) ? mape.toFixed(1) : '?'}%</span>
+      </div>`;
+    }).join('')}</div>`;
+    $$('.fc-row', el).forEach((row) => on(row, 'click', () => {
+      if (row.dataset.iata) openAirport(row.dataset.iata);
+    }));
+  } catch { el.innerHTML = '<div class="empty">could not load forecasts</div>'; }
+}
+
+/* -------------------------------------------------------------- alerts */
+
+async function loadAlerts() {
+  const el = $('#alerts');
+  el.innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const g = $('#alert-grain').value;
+    const d = await api(`/api/v1/anomalies?limit=30${g ? `&grain=${g}` : ''}`);
+    $('#nav-alert-count').textContent = d.rows.length ? d.rows.length : '';
+    $('#alert-sub').textContent = `${d.rows.length} flagged, most significant first.`;
+    if (!d.rows.length) return void (el.innerHTML = '<div class="empty">nothing flagged</div>');
+    el.innerHTML = d.rows.map((r) => {
+      const sev = String(r.severity || '').toLowerCase();
+      const cls = sev === 'high' ? 'high' : sev === 'medium' ? 'med' : 'low';
+      return `<div class="alert">
+        <span class="alert-sev ${cls}"></span>
+        <div class="alert-body">
+          <div class="alert-top">
+            <span class="alert-name">${esc(r.entity_name || r.entity_key)}</span>
+            <span class="code">${esc(r.entity_key)}</span>
+            <span class="pill ${cls === 'high' ? 'bad' : 'warn'}">${esc(r.severity)}</span>
+            <span class="pill">${esc(r.method)}</span>
+          </div>
+          <div class="alert-plain">${esc(plainAnomaly(r))}</div>
+          <div class="alert-detail">observed ${n1(r.observed_mt)} · expected ${n1(r.expected_mt)} · ${esc(String(r.direction).toLowerCase())}</div>
+        </div></div>`;
+    }).join('');
+  } catch { el.innerHTML = '<div class="empty">could not load alerts</div>'; }
+  loadInsights();
+}
+
+async function loadInsights() {
+  const el = $('#insights');
+  try {
+    const d = await api('/api/v1/insights?limit=12');
+    el.innerHTML = d.rows.length
+      ? d.rows.map((r) => `<div class="insight"><h3>${esc(r.headline)}</h3><p>${esc(r.narrative)}</p></div>`).join('')
+      : '<div class="empty">No explanations written yet — run the insight stage.</div>';
+  } catch { el.innerHTML = '<div class="empty">could not load explanations</div>'; }
+}
+
+/* ------------------------------------------------------- agent console */
 
 const policyClass = (p = '') =>
-  p.startsWith('llm') ? 'model'
+  p.startsWith('llm') || p === 'model' ? 'model'
   : p.startsWith('heuristic(fallback') ? 'fallback'
-  : p.startsWith('heuristic') ? 'heuristic'
-  : 'unrecorded';
-
-const policyLabel = (p = '') =>
-  p.startsWith('llm') ? p.replace(/^llm:/, '') : p || 'unrecorded';
+  : p.startsWith('heuristic') ? 'heuristic' : '';
 
 async function loadAgents() {
   try {
     const s = await api('/api/v1/agents/stats');
     const t = s.totals || {};
     $('#agent-totals').innerHTML = [
-      ['Runs', int(t.runs)],
-      ['Steps', int(t.steps)],
-      ['Pipelines', int(t.traces)],
-      ['Succeeded', `${int(t.succeeded)}`],
-      ['Model tokens', int(t.tokens || 0)],
+      ['Runs', int(t.runs)], ['Steps', int(t.steps)], ['Pipelines', int(t.traces)],
+      ['Succeeded', int(t.succeeded)], ['Model tokens', int(t.tokens || 0)],
     ].map(([l, v]) => `<div class="stat"><div class="s-value">${v}</div><div class="s-label">${l}</div></div>`).join('');
     $('#nav-agent-count').textContent = int(t.runs);
 
-    // calls > runs_using means the agent invoked a tool more than once in a
-    // run, which is what recovering from a failed parser looks like.
     const maxCalls = Math.max(...s.tools.map((x) => x.calls), 1);
     $('#tool-stats').innerHTML = `<div class="rows">${s.tools.map((x) => `
       <div class="row tool-row">
         <span class="name"><span class="step-tool">${esc(x.tool)}</span>
-          <div class="bar-wrap"><div class="bar" style="width:${(x.calls / maxCalls) * 100}%"></div></div>
-        </span>
+          <div class="bar-wrap"><div class="bar" style="width:${(x.calls / maxCalls) * 100}%"></div></div></span>
         <span class="num">${int(x.calls)}</span>
-        <span class="pill ${x.failed_calls ? 'bad' : 'ok'}">${x.calls > x.runs_using ? `${x.calls - x.runs_using} retried` : 'no retry'}</span>
+        <span class="pill ${x.calls > x.runs_using ? 'warn' : 'ok'}">${x.calls > x.runs_using ? `${x.calls - x.runs_using} retried` : 'no retry'}</span>
       </div>`).join('')}</div>`;
 
-    const colours = { model: 'var(--violet)', heuristic: 'var(--accent)', mixed: 'var(--warn)', unrecorded: 'var(--muted)', none: 'var(--muted)' };
+    const colours = { model: 'var(--violet)', heuristic: 'var(--indigo)', mixed: 'var(--saffron)', unrecorded: 'var(--faint)', none: 'var(--faint)' };
     const total = s.policies.reduce((a, p) => a + Number(p.runs), 0) || 1;
     $('#policy-stats').innerHTML = `
       <div class="policy-bar">${s.policies.map((p) =>
-        `<div class="policy-seg" style="width:${(p.runs / total) * 100}%;background:${colours[p.effective_policy] || 'var(--muted)'}"></div>`).join('')}</div>
-      <div class="legend">${s.policies.map((p) => `
-        <div class="legend-item">
-          <span class="legend-swatch" style="background:${colours[p.effective_policy] || 'var(--muted)'}"></span>
-          <span>${esc(p.effective_policy)}</span>
-          <span class="num">${int(p.runs)} runs</span>
-        </div>`).join('')}
+        `<div style="width:${(p.runs / total) * 100}%;background:${colours[p.effective_policy] || 'var(--faint)'}"></div>`).join('')}</div>
+      <div class="legend">${s.policies.map((p) => `<div class="legend-item">
+          <span class="legend-swatch" style="background:${colours[p.effective_policy] || 'var(--faint)'}"></span>
+          <span>${esc(p.effective_policy)}</span><span class="num">${int(p.runs)} runs</span></div>`).join('')}
         ${s.policies.some((p) => p.effective_policy === 'unrecorded')
-          ? '<div class="legend-item" style="color:var(--muted);font-size:11.5px;margin-top:4px">“unrecorded” predates per-step policy tracking — those runs are not claimed as model decisions.</div>'
-          : ''}
+          ? '<div class="legend-item" style="color:var(--muted);font-size:12px;margin-top:5px">“unrecorded” predates per-step policy tracking — those runs are not claimed as model decisions.</div>' : ''}
       </div>`;
 
-    const agents = s.agents.map((a) => a.agent);
-    $('#run-agent').innerHTML = '<option value="">All agents</option>' +
-      agents.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+    $('#run-agent').innerHTML = '<option value="">All agents</option>'
+      + s.agents.map((a) => `<option value="${esc(a.agent)}">${esc(a.agent)}</option>`).join('');
   } catch { $('#agent-totals').innerHTML = '<div class="empty">agent stats unavailable</div>'; }
-
   loadRuns();
 }
 
 async function loadRuns() {
   const el = $('#run-list');
-  const agent = $('#run-agent').value;
   el.innerHTML = '<div class="loading">loading…</div>';
   try {
+    const agent = $('#run-agent').value;
     const d = await api(`/api/v1/agents/runs?limit=40${agent ? `&agent=${encodeURIComponent(agent)}` : ''}`);
-    if (!d.rows.length) { el.innerHTML = '<div class="empty">no recorded runs</div>'; return; }
-
+    if (!d.rows.length) return void (el.innerHTML = '<div class="empty">no recorded runs</div>');
     el.innerHTML = `<div class="rows">${d.rows.map((r) => `
       <div class="row run-row" data-run="${r.agent_run_id}">
-        <span class="pill ${r.succeeded ? 'ok' : 'bad'}">${r.succeeded ? 'ok' : 'failed'}</span>
-        <span class="name"><strong>${esc(r.agent)}</strong> — ${esc(r.goal)}</span>
-        <span class="pill ${policyClass(r.effective_policy === 'model' ? 'llm' : r.effective_policy)}">${esc(r.effective_policy)}</span>
+        <span class="pill ${r.succeeded ? 'ok' : 'bad'}">${r.succeeded ? 'met' : 'gave up'}</span>
+        <span class="name"><span class="name-main"><strong>${esc(r.agent)}</strong> — ${esc(r.goal)}</span></span>
+        <span class="pill ${policyClass(r.effective_policy)}">${esc(r.effective_policy)}</span>
         <span class="num">${r.steps} steps</span>
         <span class="num">${int(r.elapsed_ms)} ms</span>
       </div>`).join('')}</div>`;
-
-    $$('.run-row', el).forEach((row) =>
-      row.addEventListener('click', () => {
-        $$('.run-row', el).forEach((x) => x.classList.remove('is-selected'));
-        row.classList.add('is-selected');
-        $('#replay-run').value = row.dataset.run;
-        showRun(row.dataset.run);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }));
-
-    const sel = $('#replay-run');
-    sel.innerHTML = d.rows.map((r) =>
+    $$('.run-row', el).forEach((row) => on(row, 'click', () => {
+      $$('.run-row', el).forEach((x) => x.classList.remove('is-selected'));
+      row.classList.add('is-selected');
+      $('#replay-run').value = row.dataset.run;
+      showRun(row.dataset.run);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }));
+    $('#replay-run').innerHTML = d.rows.map((r) =>
       `<option value="${r.agent_run_id}">#${r.agent_run_id} · ${esc(r.agent)} · ${r.steps} steps</option>`).join('');
-    if (d.rows.length) showRun(d.rows[0].agent_run_id);
+    showRun(d.rows[0].agent_run_id);
   } catch { el.innerHTML = '<div class="empty">could not load runs</div>'; }
 }
 
@@ -246,31 +511,26 @@ function renderGoal(run, note = '') {
     <div class="goal-line">
       <span class="pill ${run.succeeded ? 'ok' : 'bad'}">${run.succeeded ? 'goal met' : 'gave up'}</span>
       <span class="pill">${esc(run.agent)}</span>
-      <span class="pill ${policyClass(run.effective_policy === 'model' ? 'llm' : run.effective_policy)}">${esc(run.effective_policy)}</span>
+      <span class="pill ${policyClass(run.effective_policy)}">${esc(run.effective_policy)}</span>
       <span class="step-ms">${int(run.elapsed_ms)} ms</span>
     </div>
     <p class="goal-text">${esc(run.goal)}</p>
     ${note ? `<p class="step-ms">${esc(note)}</p>` : ''}`;
 }
 
-function stepHTML(s) {
+const stepHTML = (s) => {
   const args = s.args && Object.keys(s.args).length ? JSON.stringify(s.args) : '';
   return `<li class="step ${s.ok ? 'ok' : 'err'}">
     <span class="step-dot">${s.ok ? '✓' : '!'}</span>
     <div class="step-main">
-      <div class="step-top">
-        <span class="step-tool">${esc(s.tool)}</span>
-        ${s.policy ? `<span class="pill ${policyClass(s.policy)}">${esc(policyLabel(s.policy))}</span>` : ''}
-        <span class="step-ms">${int(s.elapsed_ms)} ms</span>
-      </div>
-      ${s.reasoning
-        ? `<p class="step-why">${esc(s.reasoning)}</p>`
-        : (s.policy ? '' : '<p class="step-why" style="opacity:.5;border-color:var(--border)">reasoning not recorded — this run predates per-step provenance</p>')}
+      <div class="step-top"><span class="step-tool">${esc(s.tool)}</span>
+        ${s.policy ? `<span class="pill ${policyClass(s.policy)}">${esc(s.policy.replace(/^llm:/, ''))}</span>` : ''}
+        <span class="step-ms">${int(s.elapsed_ms)} ms</span></div>
+      ${s.reasoning ? `<p class="step-why">${esc(s.reasoning)}</p>` : ''}
       ${args ? `<div class="step-args">${esc(args.slice(0, 260))}</div>` : ''}
       <div class="step-obs">${esc(String(s.observation).slice(0, 340))}</div>
-    </div>
-  </li>`;
-}
+    </div></li>`;
+};
 
 async function showRun(id) {
   const list = $('#replay-steps');
@@ -284,125 +544,32 @@ async function showRun(id) {
 }
 
 let stream = null;
-
 function replay() {
   const id = $('#replay-run').value;
   if (!id) return;
   if (stream) { stream.close(); stream = null; }
-
-  const btn = $('#replay-btn');
-  const list = $('#replay-steps');
-  list.innerHTML = '';
-  btn.disabled = true;
-  btn.textContent = '● Replaying';
-  $('#replay-foot').textContent = 'streaming…';
-
+  const btn = $('#replay-btn'), list = $('#replay-steps');
+  list.innerHTML = ''; btn.disabled = true; btn.textContent = '● Replaying';
   stream = new EventSource(`/api/v1/agents/stream?run_id=${id}&delay_ms=460`);
-
-  stream.addEventListener('run', (e) =>
-    renderGoal(JSON.parse(e.data), 'replay of a recorded trace, paced for reading'));
-
+  stream.addEventListener('run', (e) => renderGoal(JSON.parse(e.data), 'recorded trace, replayed at reading pace'));
   stream.addEventListener('step', (e) => {
     list.insertAdjacentHTML('beforeend', stepHTML(JSON.parse(e.data)));
     list.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
-
-  const finish = (text) => {
+  const finish = (t) => {
     if (stream) { stream.close(); stream = null; }
-    btn.disabled = false;
-    btn.textContent = '▶ Replay';
-    $('#replay-foot').textContent = text;
+    btn.disabled = false; btn.textContent = '▶ Replay'; $('#replay-foot').textContent = t;
   };
-
   stream.addEventListener('done', (e) => {
     const d = JSON.parse(e.data);
     finish(`${d.steps} steps · ${d.summary || (d.succeeded ? 'goal met' : 'gave up')}`);
   });
-  // EventSource retries by default; a completed stream closes server-side
-  // and would otherwise reconnect and replay forever.
+  // EventSource reconnects by default; a finished stream closes server-side
+  // and would otherwise replay forever.
   stream.onerror = () => finish('stream ended');
 }
 
-/* ------------------------------------------------------- intelligence -- */
-
-async function loadIntel() {
-  loadAlerts();
-  loadForecasts();
-  loadInsights();
-}
-
-async function loadAlerts() {
-  const el = $('#alerts');
-  const grain = $('#alert-grain').value;
-  el.innerHTML = '<div class="loading">loading…</div>';
-  try {
-    const d = await api(`/api/v1/anomalies?limit=25${grain ? `&grain=${grain}` : ''}`);
-    if (!d.rows.length) { el.innerHTML = '<div class="empty">no anomalies</div>'; return; }
-    $('#nav-alert-count').textContent = d.rows.length;
-    el.innerHTML = d.rows.map((r) => {
-      const z = Math.abs(Number(r.score ?? r.z_score ?? 0));
-      const sev = z > 6 ? 'high' : z > 4 ? 'med' : 'low';
-      const dev = Number(r.deviation_pct);
-      return `<div class="alert">
-        <span class="alert-sev ${sev}"></span>
-        <div class="alert-body">
-          <div class="alert-top">
-            <span class="alert-name">${esc(r.entity_name || r.entity_key)}</span>
-            <span class="code">${esc(r.entity_key)}</span>
-            <span class="pill">${esc(r.period)}</span>
-            <span class="pill">${esc(r.method || 'statistical')}</span>
-          </div>
-          <div class="alert-detail">
-            observed ${num(r.observed_mt)} MT · expected ${num(r.expected_mt)} MT
-            ${Number.isFinite(dev) ? ` · ${dev >= 0 ? '+' : ''}${dev.toFixed(1)}%` : ''}
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch { el.innerHTML = '<div class="empty">could not load alerts</div>'; }
-}
-
-async function loadForecasts() {
-  const el = $('#forecasts');
-  try {
-    const d = await api('/api/v1/forecasts?limit=15');
-    if (!d.rows.length) { el.innerHTML = '<div class="empty">no forecasts</div>'; return; }
-    // Horizon and direction are what distinguish otherwise identical rows:
-    // seasonal_naive repeats the last seasonal value at every horizon, so
-    // without them three legitimate forecasts read as one duplicated three times.
-    el.innerHTML = `<div class="rows">${d.rows.map((r) => `
-      <div class="row fc-row">
-        <span class="name">
-          <strong>${esc(r.entity_name || r.entity_key)}</strong>
-          <span class="pill">h+${esc(r.horizon)}</span>
-          <span class="pill">${esc(String(r.direction || '').toLowerCase())}</span>
-          <div class="fc-band">${esc(r.model || '')} · ${esc(r.period)} ·
-            ${num(r.lower_mt, 0)} – ${num(r.upper_mt, 0)} MT</div>
-        </span>
-        <span class="num">${num(r.predicted_mt)}</span>
-        <span class="pill ${Number(r.backtest_mape_pct) <= 12 ? 'ok' : ''}">${
-          Number.isFinite(Number(r.backtest_mape_pct)) ? Number(r.backtest_mape_pct).toFixed(1) + '% MAPE' : '—'}</span>
-      </div>`).join('')}</div>`;
-  } catch { el.innerHTML = '<div class="empty">could not load forecasts</div>'; }
-}
-
-async function loadInsights() {
-  const el = $('#insights');
-  try {
-    const d = await api('/api/v1/insights?limit=12');
-    if (!d.rows.length) {
-      el.innerHTML = '<div class="empty">No written insights yet — run the analytics stage to generate them.</div>';
-      return;
-    }
-    el.innerHTML = d.rows.map((r) => `
-      <div class="insight">
-        <h3>${esc(r.headline)}</h3>
-        <p>${esc(r.narrative)}</p>
-      </div>`).join('');
-  } catch { el.innerHTML = '<div class="empty">could not load insights</div>'; }
-}
-
-/* ---------------------------------------------------------------- ask -- */
+/* ----------------------------------------------------------------- ask */
 
 const SUGGESTIONS = [
   'Which airports handle the most cargo?',
@@ -426,155 +593,169 @@ async function ask(question) {
   const thinking = bubble('<p class="step-ms">querying the semantic layer…</p>');
   try {
     const d = await api('/api/v1/chat/query', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
     });
-
     const cols = d.rows.length ? Object.keys(d.rows[0]) : [];
-    const table = d.rows.length
-      ? `<table class="answer-table">
-           <tr>${cols.map((c) => `<th>${esc(c.replace(/_/g, ' '))}</th>`).join('')}</tr>
-           ${d.rows.slice(0, 6).map((r) => `<tr>${cols.map((c) => {
-             const v = r[c];
-             const n = typeof v === 'number' || (!Number.isNaN(Number(v)) && v !== null && v !== '');
-             return `<td class="${n ? 'n' : ''}">${n ? num(v) : esc(v)}</td>`;
-           }).join('')}</tr>`).join('')}
-         </table>`
-      : '';
-
-    const passages = (d.passages || []).slice(0, 2).map((p) => `
-      <div class="passage">
-        <div class="p-src">${esc(p.publisher)}${p.page ? ` · page ${p.page}` : ''} · score ${p.score}</div>
-        ${esc(String(p.excerpt).slice(0, 190))}…
-      </div>`).join('');
-
+    const table = d.rows.length ? `<table class="answer-table">
+        <tr>${cols.map((c) => `<th>${esc(c.replace(/_/g, ' '))}</th>`).join('')}</tr>
+        ${d.rows.slice(0, 6).map((r) => `<tr>${cols.map((c) => {
+          const v = r[c];
+          const num = v !== null && v !== '' && !Number.isNaN(Number(v));
+          return `<td class="${num ? 'n' : ''}">${num ? n1(v) : esc(v)}</td>`;
+        }).join('')}</tr>`).join('')}</table>` : '';
+    const passages = (d.passages || []).slice(0, 2).map((p) => `<div class="passage">
+        <div class="p-src">${esc(p.publisher)}${p.page ? ` · page ${p.page}` : ''}</div>
+        ${esc(String(p.excerpt).slice(0, 190))}…</div>`).join('');
     const cites = (d.citations || []).slice(0, 3).map((c) =>
       `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">↗ ${esc(c.publisher)} — ${esc(c.title || c.source_url)}</a>`).join('');
-
     thinking.innerHTML = `
-      <div class="meta">
-        <span class="pill ${d.grounded ? 'ok' : 'bad'}">${d.grounded ? 'grounded' : 'ungrounded'}</span>
-        <span class="pill">${esc(d.intent)}</span>
-        ${d.retrieval ? `<span class="pill">${esc(d.retrieval.backend.split('(')[0])}</span>` : ''}
-      </div>
-      <p>${esc(d.answer)}</p>
-      ${table}
-      ${passages ? `<div style="margin-top:8px"><div class="p-src" style="color:var(--muted);font-size:11px">retrieved passages</div>${passages}</div>` : ''}
+      <div class="meta"><span class="pill ${d.grounded ? 'ok' : 'bad'}">${d.grounded ? 'every figure traced' : 'ungrounded'}</span>
+        <span class="pill">${esc(d.intent)}</span></div>
+      <p>${esc(d.answer)}</p>${table}
+      ${passages ? `<div style="margin-top:9px"><div class="p-src">retrieved passages</div>${passages}</div>` : ''}
       ${cites ? `<div class="cites">${cites}</div>` : ''}
-      <p class="step-ms" style="margin-top:7px">read as: ${esc(d.understood_as)}</p>`;
-  } catch (e) {
-    thinking.innerHTML = `<p>Could not answer that. ${esc(e.message)}</p>`;
-  }
+      <p class="step-ms" style="margin-top:8px">read as: ${esc(d.understood_as)}</p>`;
+  } catch (e) { thinking.innerHTML = `<p>Could not answer that (${esc(e.message)}).</p>`; }
 }
 
-/* --------------------------------------------------------- provenance -- */
+/* --------------------------------------------------------------- brief */
+
+async function loadBrief() {
+  const el = $('#brief');
+  try {
+    const res = await fetch('/api/v1/reports/brief');
+    const html = await res.text();
+    // The endpoint returns a whole document; lift its body so it inherits
+    // the dashboard's theme instead of fighting it.
+    const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
+    el.innerHTML = body ? body[1] : html;
+    el.querySelectorAll('script, link, style').forEach((n) => n.remove());
+  } catch { el.innerHTML = '<div class="empty">could not load the brief</div>'; }
+}
+
+/* ---------------------------------------------------- sources & health */
 
 async function loadSources() {
   try {
     const d = await api('/api/v1/sources');
-    const el = $('#sources');
-    el.innerHTML = `<div class="rows">${d.publishers.map((p) => `
-      <div class="row src-row">
-        <span class="code">${esc(p.publisher)}</span>
-        <span class="name">${int(p.documents)} documents · retrieved ${ago(p.last_retrieved)}</span>
-        <span class="num">${int(p.facts)} facts</span>
-      </div>`).join('')}</div>`;
+    $('#sources').innerHTML = `<div class="rows">${d.publishers.map((p) => `
+      <div class="row src-row"><span class="code">${esc(p.publisher)}</span>
+        <span class="name"><span class="name-main">${int(p.documents)} documents</span>
+          <div class="alert-detail">retrieved ${esc(ago(p.last_retrieved))}</div></span>
+        <span class="num">${int(p.facts)} facts</span></div>`).join('')}</div>`;
   } catch { $('#sources').innerHTML = '<div class="empty">could not load sources</div>'; }
 
   try {
     const s = await api('/api/v1/search/stats');
     $('#index-stats').innerHTML = `<div class="rows">
-      ${s.by_publisher.map((p) => `
-        <div class="row src-row">
-          <span class="code">${esc(p.publisher)}</span>
-          <span class="name">${int(p.documents)} documents indexed</span>
-          <span class="num">${int(p.chunks)} passages</span>
-        </div>`).join('')}
-      <div class="row src-row">
-        <span class="code">MODEL</span>
-        <span class="name">${esc(s.embed_models.join(', ') || 'none')}</span>
-        <span class="num">${int(s.vocabulary_terms)} terms</span>
-      </div>
-    </div>`;
+      ${s.by_publisher.map((p) => `<div class="row src-row"><span class="code">${esc(p.publisher)}</span>
+        <span class="name"><span class="name-main">${int(p.documents)} documents indexed</span></span>
+        <span class="num">${int(p.chunks)} passages</span></div>`).join('')}
+      <div class="row src-row"><span class="code">MODEL</span>
+        <span class="name"><span class="name-main">${esc(s.embed_models.join(', ') || 'none')}</span></span>
+        <span class="num">${int(s.vocabulary_terms)} terms</span></div></div>`;
   } catch { $('#index-stats').innerHTML = '<div class="empty">index unavailable</div>'; }
+
+  loadHealth();
 }
 
-async function runSearch(q) {
-  const el = $('#search-results');
-  el.innerHTML = '<div class="loading">searching…</div>';
+async function loadHealth() {
+  const el = $('#health');
+  let html = '';
   try {
-    const d = await api(`/api/v1/search?q=${encodeURIComponent(q)}&top_k=6`);
-    if (!d.passages.length) { el.innerHTML = '<div class="empty">nothing matched</div>'; return; }
-    el.innerHTML = d.passages.map((p) => `
-      <div class="result">
-        <div class="result-head">
-          <span class="code">${esc(p.publisher)}</span>
-          ${p.page ? `<span class="pill">page ${p.page}</span>` : ''}
-          <span class="pill">${p.score}</span>
-          <a href="${esc(p.source_url)}" target="_blank" rel="noopener">↗ document</a>
-        </div>
-        <div class="result-body">${esc(String(p.excerpt).slice(0, 300))}…</div>
-      </div>`).join('');
-  } catch { el.innerHTML = '<div class="empty">search failed</div>'; }
+    const p = await api('/api/v1/pipeline/state');
+    html += p.stages?.length
+      ? `<div>${p.stages.map((s) => `<div class="stage-row">
+            <span class="pill ${s.ok ? 'ok' : 'bad'}">${s.ok ? 'ok' : 'failed'}</span>
+            <span class="stage-name">${esc(s.name)}</span>
+            <span class="stage-detail">${esc(String(s.detail).slice(0, 90))}</span>
+            <span class="stage-secs">${Number(s.seconds).toFixed(1)}s</span></div>`).join('')}</div>`
+      : `<p class="empty" style="text-align:left;padding:0">${esc(p.detail || 'no run recorded')}</p>`;
+  } catch { html += '<p class="empty" style="text-align:left;padding:0">pipeline state unavailable</p>'; }
+
+  try {
+    const text = await (await fetch('/metrics')).text();
+    const want = /^(aci_[a-z_]+)(?:\{[^}]*\})?\s+([0-9.e+-]+)$/gim;
+    const seen = new Map();
+    let m;
+    while ((m = want.exec(text))) if (!seen.has(m[1])) seen.set(m[1], Number(m[2]));
+    if (seen.size) {
+      html += `<div class="metric-grid">${[...seen].slice(0, 8).map(([k, v]) =>
+        `<div class="metric"><div class="m-name">${esc(k.replace(/^aci_/, ''))}</div>
+         <div class="m-val">${Number.isInteger(v) ? int(v) : n1(v)}</div></div>`).join('')}</div>`;
+    }
+  } catch { /* metrics are optional context */ }
+  el.innerHTML = html || '<div class="empty">no health data</div>';
 }
 
-/* -------------------------------------------------------------- boot -- */
+/* ---------------------------------------------------------------- boot */
 
 const LOADERS = {
-  overview: loadOverview,
-  agents: loadAgents,
-  intel: loadIntel,
-  ask: () => {},
-  sources: loadSources,
+  overview: loadOverview, airport: loadAirportView, forecast: loadForecasts,
+  alerts: loadAlerts, ask: () => {}, brief: loadBrief,
+  agents: loadAgents, sources: loadSources,
 };
 
-async function loadPipeline() {
+async function loadPipelineChip() {
   try {
     const p = await api('/api/v1/pipeline/state');
     const chip = $('#pipeline-chip');
-    chip.classList.add(p.ok ? 'ok' : 'bad');
-    $('#pipeline-label').textContent = p.ok ? `pipeline ok · ${ago(p.finished_at)}` : 'last run failed';
-    $('#freshness').textContent = `last ingest ${ago(p.finished_at)}`;
+    if (p.stages?.length) {
+      chip.classList.add(p.ok ? 'ok' : 'bad');
+      $('#pipeline-label').textContent = p.ok ? `pipeline ok · ${ago(p.finished_at)}` : 'last run failed';
+      $('#freshness').textContent = `data refreshed ${ago(p.finished_at)}`;
+    } else {
+      $('#pipeline-label').textContent = 'no run recorded yet';
+      $('#freshness').textContent = '';
+    }
   } catch {
     $('#pipeline-label').textContent = 'pipeline unknown';
     $('#freshness').textContent = '';
   }
 }
 
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  const lbl = $('#theme-label');
+  if (lbl) lbl.textContent = t === 'dark' ? 'Light mode' : 'Dark mode';
+  try { localStorage.setItem('aci-theme', t); } catch { /* private mode */ }
+}
+
 function init() {
-  const saved = localStorage.getItem('aci-theme');
-  if (saved) document.documentElement.dataset.theme = saved;
+  let saved = null;
+  try { saved = localStorage.getItem('aci-theme'); } catch { /* private mode */ }
+  applyTheme(saved || 'light');
+  on('#theme-toggle', 'click', () =>
+    applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 
-  on('#theme-toggle', 'click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('aci-theme', next); } catch { /* private mode */ }
-  });
-
-  const rail = $('.rail');
-  const scrim = $('#scrim');
-  const closeRail = () => {
-    rail?.classList.remove('is-open');
-    if (scrim) scrim.hidden = true;
-  };
+  const rail = $('#rail'), scrim = $('#scrim');
+  const closeRail = () => { rail?.classList.remove('is-open'); if (scrim) scrim.hidden = true; };
   on('#menu-btn', 'click', () => {
     rail?.classList.toggle('is-open');
     if (scrim) scrim.hidden = !rail?.classList.contains('is-open');
   });
   on(scrim, 'click', closeRail);
+  $$('.nav-item').forEach((b) => on(b, 'click', () => { show(b.dataset.view); closeRail(); }));
 
-  $$('.nav-item').forEach((b) =>
-    b.addEventListener('click', () => { show(b.dataset.view); closeRail(); }));
   on('#rank-direction', 'change', loadRankings);
   on('#rank-order', 'change', loadRankings);
+  on('#airport-pick', 'change', (e) => drawAirport(e.target.value));
+  on('#airport-direction', 'change', () => drawAirport($('#airport-pick').value));
+  on('#fc-grain', 'change', loadForecasts);
+  on('#fc-horizon', 'change', loadForecasts);
   on('#alert-grain', 'change', loadAlerts);
   on('#run-agent', 'change', loadRuns);
   on('#replay-btn', 'click', replay);
   on('#replay-run', 'change', (e) => showRun(e.target.value));
 
-  if ($('#suggestions')) $('#suggestions').innerHTML = SUGGESTIONS.map((s) => `<button class="chip">${esc(s)}</button>`).join('');
-  $$('#suggestions .chip').forEach((c) => c.addEventListener('click', () => ask(c.textContent)));
+  const sug = $('#suggestions');
+  if (sug) {
+    sug.innerHTML = SUGGESTIONS.map((s) => `<button class="chip">${esc(s)}</button>`).join('');
+    $$('.chip', sug).forEach((c) => on(c, 'click', () => ask(c.textContent)));
+  }
+  bubble('<p>Ask about airport rankings, airline share, anomalies, forecasts or sources. '
+       + 'Every figure comes from a stored row and carries the document behind it.</p>');
 
   on('#chat-form', 'submit', (e) => {
     e.preventDefault();
@@ -583,24 +764,36 @@ function init() {
     $('#chat-input').value = '';
     ask(v);
   });
-
   on('#search-form', 'submit', (e) => {
     e.preventDefault();
     const v = $('#search-input').value.trim();
     if (v) runSearch(v);
   });
+  on(window, 'hashchange', () => show(location.hash.slice(1)));
 
-  loadPipeline();
-  show(location.hash.slice(1) in VIEWS ? location.hash.slice(1) : 'overview');
+  loadPipelineChip();
+  // Alert and forecast counts are wanted in the sidebar before those views
+  // are opened, so fetch just the counts up front.
+  api('/api/v1/anomalies?limit=30').then((d) => { $('#nav-alert-count').textContent = d.rows.length || ''; }).catch(() => {});
+  api('/api/v1/agents/stats').then((s) => { $('#nav-agent-count').textContent = int(s.totals?.runs || 0); }).catch(() => {});
+
+  show(location.hash.slice(1) || 'overview');
+}
+
+async function runSearch(q) {
+  const el = $('#search-results');
+  el.innerHTML = '<div class="loading">searching…</div>';
+  try {
+    const d = await api(`/api/v1/search?q=${encodeURIComponent(q)}&top_k=6`);
+    el.innerHTML = d.passages.length ? d.passages.map((p) => `<div class="result">
+        <div class="result-head"><span class="code">${esc(p.publisher)}</span>
+          ${p.page ? `<span class="pill">page ${p.page}</span>` : ''}
+          <a href="${esc(p.source_url)}" target="_blank" rel="noopener">↗ document</a></div>
+        <div class="result-body">${esc(String(p.excerpt).slice(0, 300))}…</div></div>`).join('')
+      : '<div class="empty">nothing matched</div>';
+  } catch { el.innerHTML = '<div class="empty">search failed</div>'; }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  try {
-    init();
-  } catch (e) {
-    // Last resort: get the default view on screen even if wiring failed,
-    // so a broken control degrades to a static page rather than a blank one.
-    console.error('init failed', e);
-    try { show('overview'); } catch { /* nothing left to do */ }
-  }
+  try { init(); } catch (e) { console.error('init failed', e); try { show('overview'); } catch { /* noop */ } }
 });

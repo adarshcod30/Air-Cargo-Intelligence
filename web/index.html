@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Air Cargo Intelligence</title>
-<meta name="description" content="Agentic analytics over Indian and international air-cargo data, with source-cited answers.">
+<meta name="description" content="Air-cargo throughput, forecasts and anomalies for Indian airports, every figure traced to the document it came from.">
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>✈</text></svg>">
 </head>
@@ -13,10 +13,16 @@
 <div class="shell">
   <div class="scrim" id="scrim" hidden></div>
 
-  <!-- ------------------------------------------------------ sidebar -->
-  <aside class="rail">
+  <!-- ------------------------------------------------------- sidebar -->
+  <aside class="rail" id="rail">
     <div class="brand">
-      <div class="brand-mark">✈</div>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none">
+          <path d="M16 3c3.2 3 4.8 6.4 4.8 10.2 0 4.6-2.2 8.4-4.8 11.5-2.6-3.1-4.8-6.9-4.8-11.5C11.2 9.4 12.8 6 16 3Z" fill="currentColor" opacity=".95"/>
+          <path d="M6 13c3.3.6 5.6 2.3 7.2 4.6-2.4 1.5-5 2-7.6 1.3.2-2 .3-4 .4-5.9Z" fill="currentColor" opacity=".55"/>
+          <path d="M26 13c-3.3.6-5.6 2.3-7.2 4.6 2.4 1.5 5 2 7.6 1.3-.2-2-.3-4-.4-5.9Z" fill="currentColor" opacity=".55"/>
+        </svg>
+      </div>
       <div class="brand-text">
         <strong>Air Cargo</strong>
         <span>Intelligence</span>
@@ -24,22 +30,37 @@
     </div>
 
     <nav class="nav" id="nav">
+      <p class="nav-group">Cargo</p>
       <button class="nav-item is-active" data-view="overview">
-        <span class="nav-ico">◧</span> Overview
+        <span class="nav-ico">▦</span> Overview
       </button>
+      <button class="nav-item" data-view="airport">
+        <span class="nav-ico">✈</span> Airport detail
+      </button>
+      <button class="nav-item" data-view="forecast">
+        <span class="nav-ico">◠</span> Forecasts
+        <span class="nav-tag" id="nav-forecast-count"></span>
+      </button>
+      <button class="nav-item" data-view="alerts">
+        <span class="nav-ico">◆</span> Alerts
+        <span class="nav-tag warn" id="nav-alert-count"></span>
+      </button>
+
+      <p class="nav-group">Explain</p>
+      <button class="nav-item" data-view="ask">
+        <span class="nav-ico">◇</span> Ask the data
+      </button>
+      <button class="nav-item" data-view="brief">
+        <span class="nav-ico">▤</span> Monthly brief
+      </button>
+
+      <p class="nav-group">Behind the numbers</p>
       <button class="nav-item" data-view="agents">
         <span class="nav-ico">⬡</span> Agent console
         <span class="nav-tag" id="nav-agent-count"></span>
       </button>
-      <button class="nav-item" data-view="intel">
-        <span class="nav-ico">◈</span> Intelligence
-        <span class="nav-tag" id="nav-alert-count"></span>
-      </button>
-      <button class="nav-item" data-view="ask">
-        <span class="nav-ico">◇</span> Ask the data
-      </button>
       <button class="nav-item" data-view="sources">
-        <span class="nav-ico">▤</span> Provenance
+        <span class="nav-ico">⛓</span> Sources &amp; health
       </button>
     </nav>
 
@@ -47,80 +68,238 @@
       <div class="pipeline-chip" id="pipeline-chip">
         <span class="dot"></span><span id="pipeline-label">checking…</span>
       </div>
-      <div class="rail-links">
-        <a href="/docs" target="_blank" rel="noopener">API</a>
-        <a href="/api/v1/reports/brief" target="_blank" rel="noopener">Brief</a>
-        <a href="/metrics" target="_blank" rel="noopener">Metrics</a>
-      </div>
-      <button class="theme-btn" id="theme-toggle" title="Toggle theme">◐ Theme</button>
+      <button class="theme-btn" id="theme-toggle">
+        <span id="theme-label">Dark mode</span>
+      </button>
     </div>
   </aside>
 
-  <!-- --------------------------------------------------------- main -->
+  <!-- ---------------------------------------------------------- main -->
   <main class="main">
 
     <header class="topbar">
       <button class="menu-btn" id="menu-btn" aria-label="Toggle navigation">☰</button>
-      <div>
+      <div class="topbar-text">
         <h1 id="view-title">Overview</h1>
-        <p class="view-sub" id="view-sub">Cargo throughput across Indian and international airports.</p>
+        <p class="view-sub" id="view-sub"></p>
       </div>
-      <div class="freshness" id="freshness">…</div>
+      <div class="freshness" id="freshness"></div>
     </header>
 
-    <!-- ============================================ OVERVIEW ======= -->
+    <!-- ========================================== OVERVIEW ========== -->
     <section class="view is-active" data-view="overview">
+
+      <div class="explainer">
+        <strong>What this is.</strong> Cargo tonnage handled by Indian and
+        international airports, assembled from published statistics. Every
+        number below was read from a source document and can be traced back
+        to it — nothing here is estimated or generated.
+      </div>
+
       <div class="kpis" id="kpis"></div>
 
       <div class="grid two">
         <article class="panel">
           <header class="panel-head">
-            <h2>Airport rankings</h2>
+            <div>
+              <h2>Busiest airports</h2>
+              <p class="panel-sub">Freight handled in the latest month held, with change against the same month a year earlier.</p>
+            </div>
             <div class="controls">
-              <select id="rank-direction" class="sel">
-                <option value="TOTAL">Total</option>
-                <option value="INTERNATIONAL">International</option>
-                <option value="DOMESTIC">Domestic</option>
+              <select id="rank-direction" class="sel" aria-label="Traffic direction">
+                <option value="TOTAL">All freight</option>
+                <option value="INTERNATIONAL">International only</option>
+                <option value="DOMESTIC">Domestic only</option>
               </select>
-              <select id="rank-order" class="sel">
-                <option value="tonnage">By tonnage</option>
-                <option value="growth">By growth</option>
+              <select id="rank-order" class="sel" aria-label="Sort order">
+                <option value="tonnage">Largest first</option>
+                <option value="growth">Fastest growing</option>
               </select>
             </div>
           </header>
           <div class="panel-body flush" id="rankings"><div class="loading">loading…</div></div>
-          <footer class="panel-foot" id="rank-note"></footer>
+          <footer class="panel-foot"><span class="unit">MT = metric tonnes</span> · click a row for the full history</footer>
         </article>
 
         <article class="panel">
           <header class="panel-head">
-            <h2>Airline cargo share</h2>
-            <span class="hint">industry aggregates excluded</span>
+            <div>
+              <h2>Airline cargo share</h2>
+              <p class="panel-sub">Total freight carried per airline across all periods held. Industry-wide totals are excluded so carriers are not double-counted.</p>
+            </div>
           </header>
           <div class="panel-body" id="airline-chart"><div class="loading">loading…</div></div>
         </article>
       </div>
     </section>
 
-    <!-- ======================================== AGENT CONSOLE ======= -->
+    <!-- ==================================== AIRPORT DETAIL ========== -->
+    <section class="view" data-view="airport">
+      <div class="explainer">
+        <strong>One airport, in full.</strong> Monthly history, where the
+        statistical model expects it to go next, and anything flagged as
+        unusual. The shaded band is the range the forecast considers likely.
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div>
+            <h2 id="airport-title">Select an airport</h2>
+            <p class="panel-sub" id="airport-sub">Monthly freight tonnage with a three-month projection.</p>
+          </div>
+          <div class="controls">
+            <select id="airport-pick" class="sel" aria-label="Airport"></select>
+            <select id="airport-direction" class="sel" aria-label="Direction">
+              <option value="TOTAL">All freight</option>
+              <option value="INTERNATIONAL">International</option>
+              <option value="DOMESTIC">Domestic</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body">
+          <div class="chart-wrap" id="airport-chart"><div class="loading">loading…</div></div>
+          <div class="legend-row" id="airport-legend"></div>
+        </div>
+        <footer class="panel-foot" id="airport-foot"></footer>
+      </article>
+
+      <div class="grid two">
+        <article class="panel">
+          <header class="panel-head"><div><h2>Reading this airport</h2>
+            <p class="panel-sub">Plain-language summary of what the series shows.</p></div></header>
+          <div class="panel-body" id="airport-summary"><div class="loading">…</div></div>
+        </article>
+        <article class="panel">
+          <header class="panel-head"><div><h2>Flagged months</h2>
+            <p class="panel-sub">Months where observed traffic departed from the seasonal pattern.</p></div></header>
+          <div class="panel-body flush" id="airport-alerts"><div class="loading">…</div></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ========================================= FORECASTS ========== -->
+    <section class="view" data-view="forecast">
+      <div class="explainer">
+        <strong>How these are produced.</strong> Each series is fitted with
+        SARIMA — a statistical model for seasonal time series — and checked
+        by <em>rolling-origin backtesting</em>: the model is repeatedly asked
+        to predict a month it was not shown, and the average error of those
+        attempts is reported as MAPE. A 6% MAPE means past predictions were
+        typically within 6% of what actually happened. Lower is better; a
+        forecast without an error figure is a guess.
+      </div>
+
+      <div class="kpis" id="forecast-kpis"></div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><h2>Projections</h2>
+            <p class="panel-sub">Predicted freight with an 80% interval — the range the model expects the true value to fall in four times out of five.</p></div>
+          <div class="controls">
+            <select id="fc-grain" class="sel" aria-label="Grain">
+              <option value="AIRPORT">Airports</option>
+              <option value="AIRLINE">Airlines</option>
+            </select>
+            <select id="fc-horizon" class="sel" aria-label="Horizon">
+              <option value="1">1 month ahead</option>
+              <option value="2">2 months ahead</option>
+              <option value="3">3 months ahead</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="forecasts"><div class="loading">loading…</div></div>
+      </article>
+    </section>
+
+    <!-- ============================================ ALERTS ========== -->
+    <section class="view" data-view="alerts">
+      <div class="explainer">
+        <strong>What counts as an alert.</strong> Seasonality is removed from
+        each series, then months whose remainder is far from typical are
+        flagged. <em>Expected</em> is what the seasonal pattern implied;
+        <em>observed</em> is what was published. A large gap is not
+        necessarily an error — a new terminal opening looks the same as a
+        data problem, and both are worth a human look.
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><h2>Flagged movements</h2>
+            <p class="panel-sub" id="alert-sub"></p></div>
+          <div class="controls">
+            <select id="alert-grain" class="sel" aria-label="Grain">
+              <option value="">Airports and airlines</option>
+              <option value="AIRPORT">Airports only</option>
+              <option value="AIRLINE">Airlines only</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="alerts"><div class="loading">loading…</div></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head"><div><h2>Written explanations</h2>
+          <p class="panel-sub">Narrated from the flagged figures. Every number is checked against a stored row before publishing; anything that does not resolve is rejected rather than shown.</p></div></header>
+        <div class="panel-body flush" id="insights"><div class="loading">loading…</div></div>
+      </article>
+    </section>
+
+    <!-- =============================================== ASK ========== -->
+    <section class="view" data-view="ask">
+      <article class="panel tall">
+        <header class="panel-head">
+          <div><h2>Ask the data</h2>
+            <p class="panel-sub">Questions are mapped onto registered metrics and answered by SQL. The model never calculates a figure — it reads rows it was handed.</p></div>
+        </header>
+        <div class="panel-body chat-body">
+          <div class="chat-log" id="chat-log"></div>
+          <div class="suggestions" id="suggestions"></div>
+          <form class="chat-input" id="chat-form">
+            <input id="chat-input" autocomplete="off" placeholder="Which airports grew fastest?">
+            <button class="btn primary" type="submit">Ask</button>
+          </form>
+        </div>
+      </article>
+    </section>
+
+    <!-- ============================================= BRIEF ========== -->
+    <section class="view" data-view="brief">
+      <div class="explainer">
+        <strong>The monthly brief.</strong> A standing report generated from
+        the same figures shown elsewhere, written for someone who wants the
+        month summarised rather than explored.
+        <a href="/api/v1/reports/brief" target="_blank" rel="noopener">Open standalone ↗</a>
+      </div>
+      <article class="panel">
+        <div class="panel-body brief-body" id="brief"><div class="loading">loading…</div></div>
+      </article>
+    </section>
+
+    <!-- ==================================== AGENT CONSOLE ========== -->
     <section class="view" data-view="agents">
+      <div class="explainer">
+        <strong>Why this exists.</strong> The data is assembled by agents that
+        choose their own steps rather than following a fixed script. Each run
+        records the goal, every tool it called, the reasoning behind the
+        choice and what came back — so a figure can be audited back through
+        the decisions that produced it. A tool called more often than the runs
+        that used it is one an agent had to retry.
+      </div>
 
       <div class="console-strip" id="agent-totals"></div>
 
       <div class="grid replay">
         <article class="panel replay-panel">
           <header class="panel-head">
-            <h2>Decision replay</h2>
+            <div><h2>Decision replay</h2>
+              <p class="panel-sub">Recorded trace, replayed at reading pace.</p></div>
             <div class="controls">
-              <select id="replay-run" class="sel"></select>
+              <select id="replay-run" class="sel" aria-label="Run"></select>
               <button class="btn primary" id="replay-btn">▶ Replay</button>
             </div>
           </header>
           <div class="panel-body replay-body">
-            <div class="replay-goal" id="replay-goal">
-              <p class="empty">Pick a run and press replay. Each step is a tool the agent
-              chose from its allowlist, with the reasoning behind the choice and what came back.</p>
-            </div>
+            <div class="replay-goal" id="replay-goal"></div>
             <ol class="steps" id="replay-steps"></ol>
           </div>
           <footer class="panel-foot" id="replay-foot"></footer>
@@ -128,113 +307,70 @@
 
         <div class="stack">
           <article class="panel">
-            <header class="panel-head"><h2>Tool usage</h2>
-              <span class="hint">calls vs runs reveals retries</span></header>
-            <div class="panel-body flush" id="tool-stats"><div class="loading">loading…</div></div>
+            <header class="panel-head"><div><h2>Tool usage</h2>
+              <p class="panel-sub">Retries are the loop recovering.</p></div></header>
+            <div class="panel-body flush" id="tool-stats"><div class="loading">…</div></div>
           </article>
           <article class="panel">
-            <header class="panel-head"><h2>Who decided</h2>
-              <span class="hint">per-step policy provenance</span></header>
-            <div class="panel-body" id="policy-stats"><div class="loading">loading…</div></div>
+            <header class="panel-head"><div><h2>Who decided</h2>
+              <p class="panel-sub">Per-step policy provenance.</p></div></header>
+            <div class="panel-body" id="policy-stats"><div class="loading">…</div></div>
           </article>
         </div>
       </div>
 
       <article class="panel">
         <header class="panel-head">
-          <h2>Recorded runs</h2>
+          <div><h2>Recorded runs</h2></div>
           <div class="controls">
-            <select id="run-agent" class="sel"><option value="">All agents</option></select>
+            <select id="run-agent" class="sel" aria-label="Agent"><option value="">All agents</option></select>
           </div>
         </header>
         <div class="panel-body flush" id="run-list"><div class="loading">loading…</div></div>
       </article>
     </section>
 
-    <!-- ========================================= INTELLIGENCE ======= -->
-    <section class="view" data-view="intel">
-      <div class="grid two">
-        <article class="panel">
-          <header class="panel-head">
-            <h2>Alert feed</h2>
-            <div class="controls">
-              <select id="alert-grain" class="sel">
-                <option value="">All grains</option>
-                <option value="AIRPORT">Airport</option>
-                <option value="AIRLINE">Airline</option>
-              </select>
-            </div>
-          </header>
-          <div class="panel-body flush" id="alerts"><div class="loading">loading…</div></div>
-        </article>
-
-        <article class="panel">
-          <header class="panel-head">
-            <h2>Forecasts</h2>
-            <span class="hint">80% interval, backtested</span>
-          </header>
-          <div class="panel-body flush" id="forecasts"><div class="loading">loading…</div></div>
-        </article>
-      </div>
-
-      <article class="panel">
-        <header class="panel-head"><h2>Written insights</h2>
-          <span class="hint">narrative only — every figure cites a stored row</span></header>
-        <div class="panel-body flush" id="insights"><div class="loading">loading…</div></div>
-      </article>
-    </section>
-
-    <!-- ================================================== ASK ======= -->
-    <section class="view" data-view="ask">
-      <article class="panel tall">
-        <header class="panel-head">
-          <h2>Ask the data</h2>
-          <span class="hint">answers are computed by SQL, never written by a model</span>
-        </header>
-        <div class="panel-body chat-body">
-          <div class="chat-log" id="chat-log">
-            <div class="msg bot">
-              <p>Ask about airport rankings, airline share, anomalies, forecasts or sources.
-              Every figure comes from a stored row and carries the document behind it.</p>
-            </div>
-          </div>
-          <div class="suggestions" id="suggestions"></div>
-          <form class="chat-input" id="chat-form">
-            <input id="chat-input" autocomplete="off"
-                   placeholder="e.g. Which airports grew fastest?">
-            <button class="btn primary" type="submit">Ask</button>
-          </form>
-        </div>
-      </article>
-    </section>
-
-    <!-- =========================================== PROVENANCE ======= -->
+    <!-- ================================ SOURCES & HEALTH ========== -->
     <section class="view" data-view="sources">
+      <div class="explainer">
+        <strong>Where every figure comes from.</strong> Each fact carries a
+        foreign key to the document it was parsed from, enforced by the
+        database rather than by convention — a fact without a source cannot
+        be stored at all.
+      </div>
+
       <div class="grid two">
         <article class="panel">
-          <header class="panel-head"><h2>Publishers</h2></header>
-          <div class="panel-body flush" id="sources"><div class="loading">loading…</div></div>
+          <header class="panel-head"><div><h2>Publishers</h2>
+            <p class="panel-sub">Documents retrieved and facts extracted from each.</p></div></header>
+          <div class="panel-body flush" id="sources"><div class="loading">…</div></div>
         </article>
         <article class="panel">
-          <header class="panel-head"><h2>Passage index</h2>
-            <span class="hint">what retrieval can cite</span></header>
-          <div class="panel-body flush" id="index-stats"><div class="loading">loading…</div></div>
+          <header class="panel-head"><div><h2>Passage index</h2>
+            <p class="panel-sub">Source text indexed so a citation can point at a paragraph, not a whole PDF.</p></div></header>
+          <div class="panel-body flush" id="index-stats"><div class="loading">…</div></div>
         </article>
       </div>
 
       <article class="panel">
-        <header class="panel-head">
-          <h2>Search source documents</h2>
-          <span class="hint">hybrid: dense vectors + full text, fused on rank</span>
-        </header>
+        <header class="panel-head"><div><h2>Search the source documents</h2>
+          <p class="panel-sub">Dense vector similarity and keyword search, fused. Returns the passage, never a computed number.</p></div></header>
         <div class="panel-body">
           <form class="chat-input" id="search-form">
-            <input id="search-input" autocomplete="off"
-                   placeholder="e.g. Mumbai international freight">
+            <input id="search-input" autocomplete="off" placeholder="Mumbai international freight">
             <button class="btn" type="submit">Search</button>
           </form>
           <div id="search-results"></div>
         </div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head"><div><h2>System health</h2>
+          <p class="panel-sub">Last pipeline run, stage by stage, and the counters exposed for monitoring.</p></div>
+          <div class="controls"><a class="btn" href="/metrics" target="_blank" rel="noopener">Raw metrics ↗</a>
+            <a class="btn" href="/docs" target="_blank" rel="noopener">API ↗</a></div>
+        </header>
+        <div class="panel-body" id="health"><div class="loading">…</div></div>
       </article>
     </section>
 

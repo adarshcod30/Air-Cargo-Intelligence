@@ -435,3 +435,22 @@ class RagVocab(Base):
     token = Column(String(64), primary_key=True)
     document_frequency = Column(Integer, nullable=False)
     total_documents = Column(Integer, nullable=False)
+
+
+class PipelineStateRow(Base):
+    """The outcome of the most recent scheduled run.
+
+    Kept in the database rather than a file because the process that runs
+    the pipeline and the process that serves the dashboard are not the same
+    machine. On a serverless host the file simply is not there, so the
+    dashboard reported "last ingest unknown" no matter how many successful
+    runs had happened.
+    """
+
+    __tablename__ = "pipeline_state"
+
+    id = Column(Integer, primary_key=True, default=1)
+    payload = Column(Text, nullable=False)
+    recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
