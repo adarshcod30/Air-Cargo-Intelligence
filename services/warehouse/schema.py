@@ -454,3 +454,48 @@ class PipelineStateRow(Base):
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+
+
+# --------------------------------------------------------------------------
+# Operating metrics
+#
+# The cargo fact table answers "how much freight moved". It cannot answer
+# "how full were the aircraft", "how much cargo per departure", or "did
+# freight track passenger capacity" - and the published statistics carry all
+# three. The extractor took one tonnage column per dataset and discarded 257
+# other fields, so the questions an airport cargo team actually asks were
+# unanswerable from data already sitting on disk.
+#
+# Kept separate from fact_cargo_movement rather than widened into it: these
+# are different units on different denominators (tonne-kilometres, counts,
+# percentages), and forcing them into a tonnage column would require either
+# a nullable mess or a lie about what the number means.
+# --------------------------------------------------------------------------
+
+
+class OperatingMetricRow(Base):
+    __tablename__ = "fact_operating_metric"
+
+    metric_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    grain = Column(GRAIN, nullable=False)
+    entity_key = Column(String(64), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("dim_period.period_id"), nullable=False)
+    direction = Column(DIRECTION, nullable=False)
+    # Canonical name, not the publisher's column heading: the same quantity
+    # appears as several different headings across the catalogue.
+    metric = Column(String(40), nullable=False, index=True)
+    value = Column(Numeric(18, 4), nullable=False)
+    unit = Column(String(24), nullable=False)
+    # Provenance is mandatory here for the same reason it is on the facts.
+    source_document_id = Column(
+        BigInteger, ForeignKey("source_document.source_document_id"), nullable=False
+    )
+    loaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "grain", "entity_key", "period_id", "direction", "metric",
+            name="operating_metric_natural_key",
+        ),
+        CheckConstraint("value >= 0", name="value_non_negative"),
+    )

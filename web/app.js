@@ -94,6 +94,7 @@ const plainAnomaly = (r) => {
 const VIEWS = {
   overview: ['Overview', 'Cargo throughput across Indian and international airports.'],
   airport:  ['Airport detail', 'History, projection and flagged months for one airport.'],
+  operations: ['Operations', 'How efficiently freight moved, and which airports drove the national change.'],
   forecast: ['Forecasts', 'Where the statistical models expect traffic to go, and how wrong they have been before.'],
   alerts:   ['Alerts', 'Months that departed from the seasonal pattern, and why that matters.'],
   ask:      ['Ask the data', 'Questions answered by SQL over a governed semantic layer.'],
@@ -351,6 +352,122 @@ async function drawAirport(iata) {
           </div></div>`).join('')
       : '<div class="empty">Nothing flagged for this airport.</div>';
   } catch { $('#airport-chart').innerHTML = '<div class="empty">could not load this airport</div>'; }
+}
+
+/* ---------------------------------------------------------- operations */
+
+async function loadOperations() { drawAttribution(); drawConcentration(); drawBelly(); drawEfficiency(); }
+
+async function drawAttribution() {
+  const el = $('#attribution');
+  el.innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const d = await api(`/api/v1/operations/attribution?direction=${$('#attr-direction').value}&top=12`);
+    if (d.detail) { el.innerHTML = `<div class="empty">${esc(d.detail)}</div>`; return; }
+
+    const sign = d.national_growth_pct >= 0 ? '+' : '';
+    $('#attr-sub').innerHTML = `National freight went from <strong>${n0(d.national_then_mt)}</strong> to `
+      + `<strong>${n0(d.national_now_mt)}</strong> MT between ${esc(prettyPeriod(d.period_then))} and `
+      + `${esc(prettyPeriod(d.period_now))} — ${sign}${d.national_growth_pct.toFixed(2)}%. `
+      + `Each airport below is shown by how much of that it accounts for.`;
+
+    // Scale bars against the largest absolute contribution so the biggest
+    // mover fills the track and the rest are readable relative to it.
+    const span = Math.max(...d.contributors.map((c) => Math.abs(c.contribution_pp)), 0.01);
+    el.innerHTML = `<div class="rows">${d.contributors.map((c) => {
+      const pos = c.contribution_pp >= 0;
+      const w = (Math.abs(c.contribution_pp) / span) * 50;
+      return `<div class="row contrib-row clickable" data-iata="${esc(c.entity_key)}">
+        <span class="code">${esc(c.entity_key)}</span>
+        <span class="name"><span class="name-main">${esc(c.entity_name)}</span></span>
+        <span class="num">${c.change_mt >= 0 ? '+' : ''}${n0(c.change_mt)} MT</span>
+        <span class="contrib-track">
+          <span class="contrib-zero" style="left:50%"></span>
+          <span class="contrib-fill ${pos ? 'pos' : 'neg'}"
+                style="${pos ? `left:50%;width:${w}%` : `right:50%;width:${w}%`}"></span>
+        </span>
+        <span class="delta ${pos ? 'up' : 'down'}">${pos ? '+' : ''}${c.contribution_pp.toFixed(2)} pp</span>
+      </div>`;
+    }).join('')}</div>`;
+    $$('.contrib-row', el).forEach((r) => on(r, 'click', () => r.dataset.iata && openAirport(r.dataset.iata)));
+  } catch { el.innerHTML = '<div class="empty">could not load attribution</div>'; }
+}
+
+async function drawConcentration() {
+  const el = $('#concentration');
+  try {
+    const d = await api('/api/v1/operations/concentration');
+    const rows = d.rows.filter((r) => r.hhi);
+    if (!rows.length) { el.innerHTML = '<div class="empty">not enough periods</div>'; return; }
+    const last = rows[rows.length - 1], first = rows[0];
+    const dir = last.hhi < first.hhi ? 'spreading across more airports'
+              : last.hhi > first.hhi ? 'consolidating onto fewer airports'
+              : 'holding steady';
+
+    const W = 460, H = 130, pad = { l: 40, r: 12, t: 12, b: 26 };
+    const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const vals = rows.map((r) => r.hhi);
+    const lo = Math.min(...vals) * 0.96, hi = Math.max(...vals) * 1.04;
+    const x = (i) => pad.l + (rows.length < 2 ? iw / 2 : (i / (rows.length - 1)) * iw);
+    const y = (v) => pad.t + ih - ((v - lo) / (hi - lo || 1)) * ih;
+    const path = rows.map((r, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(r.hhi).toFixed(1)}`).join('');
+
+    el.innerHTML = `
+      <p class="hhi-note">Currently <strong>${int(last.hhi)}</strong> —
+        ${esc(last.interpretation)}, equivalent to about
+        <strong>${last.effective_n}</strong> equally sized airports. The largest handles
+        <strong>${last.top_share_pct}%</strong> of all freight. Over these
+        ${rows.length} months the market is <strong>${dir}</strong>.</p>
+      <div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Concentration over time">
+        ${[lo, (lo + hi) / 2, hi].map((v) => `<line class="grid-line" x1="${pad.l}" y1="${y(v)}" x2="${W - pad.r}" y2="${y(v)}"/>
+          <text class="ax-text" x="${pad.l - 6}" y="${y(v) + 3}" text-anchor="end">${Math.round(v)}</text>`).join('')}
+        <path class="line-hist" d="${path}"/>
+        ${rows.map((r, i) => `<circle class="pt-hist" cx="${x(i)}" cy="${y(r.hhi)}" r="2.6"/>`).join('')}
+        <text class="ax-text" x="${pad.l}" y="${H - 8}">${esc(prettyPeriod(first.period))}</text>
+        <text class="ax-text" x="${W - pad.r}" y="${H - 8}" text-anchor="end">${esc(prettyPeriod(last.period))}</text>
+      </svg></div>
+      <p class="hhi-note" style="margin-top:10px;color:var(--muted);font-size:12px">
+        Herfindahl–Hirschman Index: the sum of squared market shares. Below 1,500 is
+        considered unconcentrated, above 2,500 highly concentrated.</p>`;
+  } catch { el.innerHTML = '<div class="empty">could not load concentration</div>'; }
+}
+
+async function drawBelly() {
+  const el = $('#belly');
+  try {
+    const d = await api('/api/v1/operations/belly-dependency');
+    const rows = d.rows.slice(0, 9);
+    if (!rows.length) { el.innerHTML = '<div class="empty">no carrier data</div>'; return; }
+    el.innerHTML = `<div class="rows">${rows.map((r) => {
+      const freighter = r.kind === 'freighter';
+      return `<div class="row src-row">
+        <span class="pill ${freighter ? 'ok' : ''}">${freighter ? 'freighter' : 'belly'}</span>
+        <span class="name"><span class="name-main">${esc(r.entity_key)}</span>
+          <div class="alert-detail">${esc(r.reading)} · ${r.months} months</div></span>
+        <span class="num">${r.mean_tonnes_per_departure == null ? '—' : r.mean_tonnes_per_departure + ' t/dep'}</span>
+      </div>`;
+    }).join('')}</div>`;
+  } catch { el.innerHTML = '<div class="empty">could not load</div>'; }
+}
+
+async function drawEfficiency() {
+  const el = $('#efficiency');
+  el.innerHTML = '<div class="loading">loading…</div>';
+  try {
+    const d = await api(`/api/v1/operations/efficiency?limit=40&direction=${$('#eff-direction').value}`);
+    if (!d.rows.length) { el.innerHTML = '<div class="empty">no paired capacity data</div>'; return; }
+    el.innerHTML = `<div class="rows">${d.rows.map((r) => `
+      <div class="row eff-row">
+        <span class="name"><span class="name-main">${esc(r.entity_key)}</span>
+          <div class="alert-detail">${esc(prettyPeriod(r.period))} · FTK ${n0(r.ftk_million)} of ${n0(r.atk_million)} available</div>
+          <div class="lf-bar"><span style="width:${Math.min(100, Number(r.cargo_load_factor_pct))}%"></span></div></span>
+        <span class="num">${Number(r.cargo_load_factor_pct).toFixed(1)}%</span>
+        <span class="num">${r.tonnes_per_departure == null ? '—' : Number(r.tonnes_per_departure).toFixed(2)} t</span>
+        <span class="num">${r.mail_share_pct == null ? '—' : Number(r.mail_share_pct).toFixed(1) + '%'}</span>
+      </div>`).join('')}</div>`;
+    $('#eff-foot').innerHTML = 'Columns: load factor · tonnes per departure · mail share. '
+      + 'A carrier lifting 20 tonnes a departure is flying freighters; one lifting under a tonne is selling belly space.';
+  } catch { el.innerHTML = '<div class="empty">could not load efficiency</div>'; }
 }
 
 /* ----------------------------------------------------------- forecasts */
@@ -692,7 +809,8 @@ async function loadHealth() {
 /* ---------------------------------------------------------------- boot */
 
 const LOADERS = {
-  overview: loadOverview, airport: loadAirportView, forecast: loadForecasts,
+  overview: loadOverview, airport: loadAirportView, operations: loadOperations,
+  forecast: loadForecasts,
   alerts: loadAlerts, ask: () => {}, brief: loadBrief,
   agents: loadAgents, sources: loadSources,
 };
@@ -742,6 +860,8 @@ function init() {
   on('#rank-order', 'change', loadRankings);
   on('#airport-pick', 'change', (e) => drawAirport(e.target.value));
   on('#airport-direction', 'change', () => drawAirport($('#airport-pick').value));
+  on('#attr-direction', 'change', drawAttribution);
+  on('#eff-direction', 'change', drawEfficiency);
   on('#fc-grain', 'change', loadForecasts);
   on('#fc-horizon', 'change', loadForecasts);
   on('#alert-grain', 'change', loadAlerts);

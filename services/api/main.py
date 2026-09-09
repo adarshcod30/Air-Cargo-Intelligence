@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from services.api.agents_routes import router as agents_router
 from services.api.agents_routes import search_router
+from services.api.operations_routes import router as operations_router
 from services.api.deps import get_session
 from services.api.schemas import (
     ChatRequest,
@@ -97,6 +98,7 @@ def _execute(session: Session, spec: QuerySpec) -> QueryResponse:
 
 app.include_router(agents_router)
 app.include_router(search_router)
+app.include_router(operations_router)
 
 
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["meta"])

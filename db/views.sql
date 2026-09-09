@@ -260,3 +260,78 @@ JOIN source_document d ON d.source_document_id = c.source_document_id;
 -- them - through a view, like everything else it reads.
 CREATE OR REPLACE VIEW v_rag_vocab AS
 SELECT token, document_frequency, total_documents FROM rag_vocab;
+
+
+-- ---------------------------------------------------------------------------
+-- Operating metrics and the efficiency measures derived from them
+--
+-- Cargo load factor is freight tonne-kilometres over available tonne-
+-- kilometres: output delivered against capacity offered. It separates growth
+-- that came from flying more from growth that came from filling what was
+-- already flying, which tonnage alone cannot distinguish.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE VIEW v_operating_metric AS
+SELECT
+    m.metric_id,
+    m.grain,
+    m.entity_key,
+    p.period_label            AS period,
+    p.sort_key,
+    m.direction,
+    m.metric,
+    m.value,
+    m.unit,
+    m.source_document_id
+FROM fact_operating_metric m
+JOIN dim_period p ON p.period_id = m.period_id;
+
+
+-- One row per carrier, period and direction, with the metrics pivoted into
+-- columns so the ratios can be expressed directly. A carrier missing either
+-- side of a ratio yields NULL rather than a fabricated denominator.
+CREATE OR REPLACE VIEW v_cargo_efficiency AS
+WITH pivoted AS (
+    SELECT
+        m.grain,
+        m.entity_key,
+        m.period_id,
+        m.direction,
+        max(m.value) FILTER (WHERE m.metric = 'ftk_million')        AS ftk_million,
+        max(m.value) FILTER (WHERE m.metric = 'atk_million')        AS atk_million,
+        max(m.value) FILTER (WHERE m.metric = 'freight_tonnes')     AS freight_tonnes,
+        max(m.value) FILTER (WHERE m.metric = 'mail_tonnes')        AS mail_tonnes,
+        max(m.value) FILTER (WHERE m.metric = 'cargo_total_tonnes') AS cargo_total_tonnes,
+        max(m.value) FILTER (WHERE m.metric = 'departures')         AS departures,
+        max(m.value) FILTER (WHERE m.metric = 'pax_carried')        AS pax_carried,
+        max(m.value) FILTER (WHERE m.metric = 'pax_load_factor')    AS pax_load_factor,
+        max(m.value) FILTER (WHERE m.metric = 'block_hours')        AS block_hours
+    FROM fact_operating_metric m
+    GROUP BY m.grain, m.entity_key, m.period_id, m.direction
+)
+SELECT
+    v.grain,
+    v.entity_key,
+    p.period_label  AS period,
+    p.sort_key,
+    v.direction,
+    v.ftk_million,
+    v.atk_million,
+    v.freight_tonnes,
+    v.mail_tonnes,
+    v.cargo_total_tonnes,
+    v.departures,
+    v.pax_carried,
+    v.pax_load_factor,
+    -- The headline efficiency measure.
+    round(100.0 * v.ftk_million / nullif(v.atk_million, 0), 2)      AS cargo_load_factor_pct,
+    -- Tonnes of freight per departure: how much each flight actually lifted.
+    round(v.freight_tonnes / nullif(v.departures, 0), 3)            AS tonnes_per_departure,
+    -- Mail is a distinct product with its own economics; its share moves
+    -- independently of general freight.
+    round(100.0 * v.mail_tonnes / nullif(v.cargo_total_tonnes, 0), 2) AS mail_share_pct,
+    -- Freight carried per passenger flown, which is what belly-hold
+    -- dependency looks like at the carrier level.
+    round(v.freight_tonnes / nullif(v.pax_carried, 0) * 1000, 3)    AS kg_freight_per_pax
+FROM pivoted v
+JOIN dim_period p ON p.period_id = v.period_id;

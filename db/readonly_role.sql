@@ -39,6 +39,11 @@ GRANT SELECT ON v_agent_tool_stats TO aci_readonly;
 GRANT SELECT ON v_document_chunk   TO aci_readonly;
 GRANT SELECT ON v_rag_vocab        TO aci_readonly;
 
+-- Operating metrics and the efficiency ratios derived from them.
+GRANT SELECT ON v_operating_metric TO aci_readonly;
+GRANT SELECT ON v_cargo_efficiency TO aci_readonly;
+GRANT SELECT ON v_pipeline_state   TO aci_readonly;
+
 -- A view runs with its owner's rights, so reading through them does not
 -- require any grant on the tables underneath. Future tables must not be
 -- granted by default either.

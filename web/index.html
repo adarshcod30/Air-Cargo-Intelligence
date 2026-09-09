@@ -41,6 +41,9 @@
         <span class="nav-ico">◠</span> Forecasts
         <span class="nav-tag" id="nav-forecast-count"></span>
       </button>
+      <button class="nav-item" data-view="operations">
+        <span class="nav-ico">◎</span> Operations
+      </button>
       <button class="nav-item" data-view="alerts">
         <span class="nav-ico">◆</span> Alerts
         <span class="nav-tag warn" id="nav-alert-count"></span>
@@ -175,6 +178,65 @@
           <div class="panel-body flush" id="airport-alerts"><div class="loading">…</div></div>
         </article>
       </div>
+    </section>
+
+    <!-- ======================================== OPERATIONS ========== -->
+    <section class="view" data-view="operations">
+      <div class="explainer">
+        <strong>What drives the number.</strong> Tonnage says how much moved.
+        These say how well, and where from. <em>Cargo load factor</em> is
+        freight tonne-kilometres over the capacity offered — it separates
+        growth that came from flying more from growth that came from filling
+        what was already flying.
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><h2>What drove the change</h2>
+            <p class="panel-sub" id="attr-sub"></p></div>
+          <div class="controls">
+            <select id="attr-direction" class="sel" aria-label="Direction">
+              <option value="TOTAL">All freight</option>
+              <option value="INTERNATIONAL">International</option>
+              <option value="DOMESTIC">Domestic</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="attribution"><div class="loading">loading…</div></div>
+        <footer class="panel-foot">Each airport&rsquo;s change measured against the <em>national</em> base, so
+          the contributions add up to the national figure rather than merely ranking movers. A small
+          airport doubling has a spectacular growth rate and a negligible contribution.</footer>
+      </article>
+
+      <div class="grid two">
+        <article class="panel">
+          <header class="panel-head"><div><h2>Market concentration</h2>
+            <p class="panel-sub">How evenly freight is spread across airports, month by month.</p></div></header>
+          <div class="panel-body" id="concentration"><div class="loading">…</div></div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head"><div><h2>Freighter or belly hold?</h2>
+            <p class="panel-sub">Whether a carrier&rsquo;s freight moves with its passenger flying.</p></div></header>
+          <div class="panel-body flush" id="belly"><div class="loading">…</div></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><h2>Carrier efficiency</h2>
+            <p class="panel-sub">Load factor, tonnes lifted per departure, and mail&rsquo;s share of what was carried.</p></div>
+          <div class="controls">
+            <select id="eff-direction" class="sel" aria-label="Direction">
+              <option value="TOTAL">All</option>
+              <option value="INTERNATIONAL">International</option>
+              <option value="DOMESTIC">Domestic</option>
+            </select>
+          </div>
+        </header>
+        <div class="panel-body flush" id="efficiency"><div class="loading">loading…</div></div>
+        <footer class="panel-foot" id="eff-foot"></footer>
+      </article>
     </section>
 
     <!-- ========================================= FORECASTS ========== -->

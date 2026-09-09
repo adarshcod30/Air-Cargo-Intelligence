@@ -457,3 +457,24 @@ a.btn { text-decoration: none; color: var(--ink-2); }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+
+/* ---------------------------------------------------------- operations */
+
+/* Contribution bars run from a shared zero so positive and negative
+   movements are comparable at a glance rather than by reading signs. */
+.contrib-row { grid-template-columns: auto minmax(0,1fr) 96px 150px 74px; }
+.contrib-track {
+  position: relative; height: 16px; background: var(--surface-3);
+  border-radius: 4px; overflow: hidden;
+}
+.contrib-zero { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-2); }
+.contrib-fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.contrib-fill.pos { background: var(--teal); }
+.contrib-fill.neg { background: var(--rose); }
+
+.hhi-note { font-size: 13px; color: var(--ink-2); margin: 0 0 12px; }
+.hhi-note strong { color: var(--ink); }
+.eff-row { grid-template-columns: minmax(0,1fr) 92px 96px 84px; }
+.lf-bar { height: 5px; background: var(--surface-3); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+.lf-bar span { display: block; height: 100%; background: var(--teal); border-radius: 3px; }
