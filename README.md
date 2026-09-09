@@ -12,7 +12,7 @@
 [![Last Commit](https://img.shields.io/github/last-commit/adarshcod30/Air-Cargo-Intelligence)](.)
 [![Issues](https://img.shields.io/github/issues/adarshcod30/Air-Cargo-Intelligence)](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues)
 
-[**Live demo**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app) &nbsp;·&nbsp; [**Agent console**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app/#agents) &nbsp;·&nbsp; [**API docs**](https://air-cargo-intelligence-adarshcod30s-projects.vercel.app/docs) &nbsp;·&nbsp; [**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Sample brief**](docs/assets/sample-brief.md)
+[**Live demo**](https://air-cargo-intelligence.vercel.app) &nbsp;·&nbsp; [**Agent console**](https://air-cargo-intelligence.vercel.app/#agents) &nbsp;·&nbsp; [**API docs**](https://air-cargo-intelligence.vercel.app/docs) &nbsp;·&nbsp; [**Requirements Spec**](docs/SRS.md) &nbsp;·&nbsp; [**Sample brief**](docs/assets/sample-brief.md)
 
 `agentic-ai` · `rag` · `aws-bedrock` · `pgvector` · `time-series-forecasting` · `anomaly-detection` · `fastapi` · `postgresql`
 
@@ -556,7 +556,15 @@ flowchart LR
 |---|---|---|
 | Compute | Vercel serverless | Does not sleep. A free tier that idles out makes a portfolio link dead on arrival for whoever opens it first. |
 | Database | Neon Postgres 17 | `pgvector` available, and the branch model makes a throwaway copy cheap. Compute suspends when idle and wakes in well under a second. |
-| Bundle | ~115 MB | Inside the 250 MB limit only because the read path is separated from the compute path. |
+| Bundle | 9 packages | `pyproject.toml` declares only the serving path; parsing and forecasting are `[ingest]` and `[analytics]` extras the function never installs. |
+
+Two deployment defects were only findable by deploying. The migration chain
+could not build a database from scratch, because a constraint name that
+already carried its prefix was passed through the naming convention a second
+time. And `pyproject.toml` never declared `fastapi` — the venv had
+accumulated it, `requirements.txt` named it correctly, and the builder reads
+`pyproject.toml` in preference. Both had been latent since the project
+started; neither is reachable from a developer machine.
 
 - **Local run:** PostgreSQL plus a Python virtualenv. No containers - the
   stack is one database and one process, and a container layer would add
