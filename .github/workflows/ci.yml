@@ -72,6 +72,15 @@ jobs:
           psql -h localhost -U cargo -d air_cargo \
             -c "ALTER ROLE aci_readonly WITH LOGIN PASSWORD 'ci_only_readonly';"
 
+      - name: Seed a small warehouse
+        # The API tests assert against a populated warehouse - rankings have
+        # a leader, an airport has a trend, airlines have an aggregate to
+        # exclude. Running them against an empty database asserted on data
+        # that was never loaded. Skipping them instead would protect nothing:
+        # they cover the like-for-like ranking guard and the airport-code
+        # validation, both of which exist because of real defects.
+        run: python -m tests.seed_warehouse
+
       - name: Test
         env:
           DATABASE_URL_READONLY: postgresql+psycopg://aci_readonly:ci_only_readonly@localhost:5432/air_cargo
