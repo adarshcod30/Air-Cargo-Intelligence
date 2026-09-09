@@ -199,7 +199,7 @@ def measure_forecast(session: Session) -> list[Measurement]:
         # Reporting 100% from a single sample would look like a pass and
         # be worth nothing.
         Measurement(
-            "Forecast", "80% interval coverage", "75–85%",
+            "Forecast", "80% interval coverage", "75-85%",
             (f"{cov_pct:.1f}% ({inside}/{total})" if total >= 20
              else f"insufficient folds ({total})"),
             ((75 <= cov_pct <= 85) if total >= 20 else None),

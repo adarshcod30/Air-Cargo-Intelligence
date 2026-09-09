@@ -1,4 +1,4 @@
-/* Air Cargo Intelligence — dashboard.
+/* Air Cargo Intelligence dashboard.
 
    No framework and no build step: the API serves this directory, so there
    is nothing to compile before the project runs. Charts are hand-drawn SVG
@@ -31,9 +31,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const n1 = (v) => (v == null || v === '' || Number.isNaN(Number(v)))
-  ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  ? 'n/a' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const n0 = (v) => (v == null || Number.isNaN(Number(v)))
-  ? '—' : Math.round(Number(v)).toLocaleString('en-IN');
+  ? 'n/a' : Math.round(Number(v)).toLocaleString('en-IN');
 const int = n0;
 
 /* One scale for a whole axis, chosen from its largest value.
@@ -49,7 +49,7 @@ const axisScale = (max) => {
 };
 const onScale = (v, sc) => {
   const x = Number(v) / sc.div;
-  if (!Number.isFinite(x)) return '—';
+  if (!Number.isFinite(x)) return 'n/a';
   return (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1)) + sc.suffix;
 };
 
@@ -59,7 +59,7 @@ const prettyPeriod = (p) => {
   if (m) return `${MONTHS[+m[2] - 1]} ${m[1]}`;
   const fy = /^(\d{4})-FY$/.exec(p || '');
   if (fy) return `FY ${fy[1]}`;
-  return p || '—';
+  return p || 'n/a';
 };
 
 const ago = (iso) => {
@@ -117,7 +117,7 @@ const plainAnomaly = (r) => {
   }
 
   const dir = Number(r.deviation_pct) >= 0 ? 'far more' : 'far less';
-  return `Handled ${n1(obs)} MT in ${when} — ${dir} than the `
+  return `Handled ${n1(obs)} MT in ${when}, ${dir} than the `
        + `${n1(exp)} MT its seasonal pattern implied.`;
 };
 
@@ -373,14 +373,14 @@ async function loadRankings() {
       const cls = Number.isFinite(g) ? (g >= 0 ? 'up' : 'down') : '';
       const sign = Number.isFinite(g) && g >= 0 ? '+' : '';
       return `<div class="row rank-row clickable" data-iata="${esc(r.airport_iata || '')}"
-                   title="${esc(r.airport_name)} — ${esc(plainDelta(g))}">
+                   title="${esc(r.airport_name)}: ${esc(plainDelta(g))}">
         <span class="rank">${i + 1}</span>
-        <span class="code">${esc(r.airport_iata || '—')}</span>
+        <span class="code">${esc(r.airport_iata || 'n/a')}</span>
         <span class="name"><span class="name-main">${esc(r.airport_name)}</span>
           <div class="bar-wrap"><div class="bar" style="width:${max ? (Number(r.tonnage_mt) / max) * 100 : 0}%"></div></div>
         </span>
         <span class="num">${n1(r.tonnage_mt)}</span>
-        <span class="delta ${cls}">${Number.isFinite(g) ? sign + g.toFixed(1) + '%' : '—'}</span>
+        <span class="delta ${cls}">${Number.isFinite(g) ? sign + g.toFixed(1) + '%' : 'n/a'}</span>
       </div>`;
     }).join('')}</div>`;
     $$('.rank-row', el).forEach((row) => on(row, 'click', () => {
@@ -416,7 +416,7 @@ async function loadAirportView() {
     const d = await api('/api/v1/airports/rankings?limit=40');
     airportList = d.rows.filter((r) => r.airport_iata);
     $('#airport-pick').innerHTML = airportList
-      .map((r) => `<option value="${esc(r.airport_iata)}">${esc(r.airport_iata)} — ${esc(r.airport_name)}</option>`).join('');
+      .map((r) => `<option value="${esc(r.airport_iata)}">${esc(r.airport_iata)} · ${esc(r.airport_name)}</option>`).join('');
     if (airportList.length) drawAirport(airportList[0].airport_iata);
   } catch { $('#airport-chart').innerHTML = '<div class="empty">could not load airports</div>'; }
 }
@@ -450,13 +450,13 @@ async function drawAirport(iata) {
     $('#airport-foot').innerHTML = mine.length
       ? `Projected with <strong>${esc(model)}</strong>. In backtesting its predictions were typically within
          <strong>${mape.toFixed(1)}%</strong> of what actually happened.`
-      : 'No projection for this series — too few periods to fit and validate a model.';
+      : 'No projection for this series: too few periods to fit and validate a model.';
 
     const last = trend.rows[trend.rows.length - 1];
     const first = trend.rows[0];
     $('#airport-summary').innerHTML = last ? `
       <p>In <strong>${esc(prettyPeriod(last.period))}</strong> this airport handled
-         <strong>${n1(last.tonnage_mt)} MT</strong> of freight — ${esc(plainDelta(last.growth_yoy_pct))}.</p>
+         <strong>${n1(last.tonnage_mt)} MT</strong> of freight, ${esc(plainDelta(last.growth_yoy_pct))}.</p>
       <p>The series held here runs from ${esc(prettyPeriod(first.period))} to
          ${esc(prettyPeriod(last.period))}, ${trend.rows.length} months in total.</p>
       ${mine.length ? `<p>The model projects <strong>${n1(mine[0].predicted_mt)} MT</strong> for
@@ -519,7 +519,7 @@ async function drawAttribution() {
     const sign = d.national_growth_pct >= 0 ? '+' : '';
     $('#attr-sub').innerHTML = `National freight went from <strong>${n0(d.national_then_mt)}</strong> to `
       + `<strong>${n0(d.national_now_mt)}</strong> MT between ${esc(prettyPeriod(d.period_then))} and `
-      + `${esc(prettyPeriod(d.period_now))} — ${sign}${d.national_growth_pct.toFixed(2)}%. `
+      + `${esc(prettyPeriod(d.period_now))}: ${sign}${d.national_growth_pct.toFixed(2)}%. `
       + `Each airport below is shown by how much of that it accounts for.`;
 
     // Scale bars against the largest absolute contribution so the biggest
@@ -564,7 +564,7 @@ async function drawConcentration() {
     const path = rows.map((r, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(r.hhi).toFixed(1)}`).join('');
 
     el.innerHTML = `
-      <p class="hhi-note">Currently <strong>${int(last.hhi)}</strong> —
+      <p class="hhi-note">Currently <strong>${int(last.hhi)}</strong>:
         ${esc(last.interpretation)}, equivalent to about
         <strong>${last.effective_n}</strong> equally sized airports. The largest handles
         <strong>${last.top_share_pct}%</strong> of all freight. Over these
@@ -578,7 +578,7 @@ async function drawConcentration() {
         <text class="ax-text" x="${W - pad.r}" y="${H - 8}" text-anchor="end">${esc(prettyPeriod(last.period))}</text>
       </svg></div>
       <p class="hhi-note" style="margin-top:10px;color:var(--muted);font-size:12px">
-        Herfindahl–Hirschman Index: the sum of squared market shares. Below 1,500 is
+        Herfindahl-Hirschman Index: the sum of squared market shares. Below 1,500 is
         considered unconcentrated, above 2,500 highly concentrated.</p>`;
   } catch { el.innerHTML = '<div class="empty">could not load concentration</div>'; }
 }
@@ -595,7 +595,7 @@ async function drawBelly() {
         <span class="pill ${freighter ? 'ok' : ''}">${freighter ? 'freighter' : 'belly'}</span>
         <span class="name"><span class="name-main">${esc(r.entity_key)}</span>
           <div class="alert-detail">${esc(r.reading)} · ${r.months} months</div></span>
-        <span class="num">${r.mean_tonnes_per_departure == null ? '—' : r.mean_tonnes_per_departure + ' t/dep'}</span>
+        <span class="num">${r.mean_tonnes_per_departure == null ? 'n/a' : r.mean_tonnes_per_departure + ' t/dep'}</span>
       </div>`;
     }).join('')}</div>`;
   } catch { el.innerHTML = '<div class="empty">could not load</div>'; }
@@ -613,8 +613,8 @@ async function drawEfficiency() {
           <div class="alert-detail">${esc(prettyPeriod(r.period))} · FTK ${n0(r.ftk_million)} of ${n0(r.atk_million)} available</div>
           <div class="lf-bar"><span style="width:${Math.min(100, Number(r.cargo_load_factor_pct))}%"></span></div></span>
         <span class="num">${Number(r.cargo_load_factor_pct).toFixed(1)}%</span>
-        <span class="num">${r.tonnes_per_departure == null ? '—' : Number(r.tonnes_per_departure).toFixed(2)} t</span>
-        <span class="num">${r.mail_share_pct == null ? '—' : Number(r.mail_share_pct).toFixed(1) + '%'}</span>
+        <span class="num">${r.tonnes_per_departure == null ? 'n/a' : Number(r.tonnes_per_departure).toFixed(2)} t</span>
+        <span class="num">${r.mail_share_pct == null ? 'n/a' : Number(r.mail_share_pct).toFixed(1) + '%'}</span>
       </div>`).join('')}</div>`;
     $('#eff-foot').innerHTML = 'Columns: load factor · tonnes per departure · mail share. '
       + 'A carrier lifting 20 tonnes a departure is flying freighters; one lifting under a tonne is selling belly space.';
@@ -650,7 +650,7 @@ async function drawDecomposition(iata, direction) {
     el.innerHTML = `<div class="decomp">
       <p class="decomp-head">Between ${esc(prettyPeriod(d.period_then))} and ${esc(prettyPeriod(d.period_now))},
         freight ${dirWord} from <strong>${n0(d.freight_then_mt)}</strong> to
-        <strong>${n0(d.freight_now_mt)}</strong> MT —
+        <strong>${n0(d.freight_now_mt)}</strong> MT,
         ${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%. That splits into:</p>
       ${bar('More flights', d.more_flights_mt,
             `${n0(d.flights_then)} → ${n0(d.flights_now)} flights`)}
@@ -676,8 +676,8 @@ async function loadForecasts() {
     const models = [...new Set(d.rows.map((r) => r.model))];
     $('#forecast-kpis').innerHTML = [
       ['Series projected', int(d.row_count), 'at this horizon', true],
-      ['Typical error', median == null ? '—' : median.toFixed(1) + '%', 'median backtest MAPE', false],
-      ['Models used', models.length, models.join(', ') || '—', false],
+      ['Typical error', median == null ? 'n/a' : median.toFixed(1) + '%', 'median backtest MAPE', false],
+      ['Models used', models.length, models.join(', ') || 'n/a', false],
       ['Interval', '80%', 'four times in five', false],
     ].map(([l, v, note, a]) => `<div class="kpi${a ? ' accent' : ''}">
         <div class="k-label">${l}</div><div class="k-value">${v}</div><div class="k-note">${esc(note)}</div></div>`).join('');
@@ -692,7 +692,7 @@ async function loadForecasts() {
           <div class="alert-detail">${esc(prettyPeriod(r.period))} · ${esc(String(r.direction).toLowerCase())} · ${esc(r.model)}</div>
         </span>
         <span class="num">${n1(r.predicted_mt)} <span class="unit" style="color:var(--muted)">MT</span></span>
-        <span class="alert-detail">${n0(r.lower_mt)} – ${n0(r.upper_mt)}</span>
+        <span class="alert-detail">${n0(r.lower_mt)} to ${n0(r.upper_mt)}</span>
         <span class="pill ${good ? 'ok' : 'warn'}" title="Past predictions were typically within this much of the truth">±${Number.isFinite(mape) ? mape.toFixed(1) : '?'}%</span>
       </div>`;
     }).join('')}</div>`;
@@ -738,7 +738,7 @@ async function loadInsights() {
     const d = await api('/api/v1/insights?limit=12');
     el.innerHTML = d.rows.length
       ? d.rows.map((r) => `<div class="insight"><h3>${esc(r.headline)}</h3><p>${esc(r.narrative)}</p></div>`).join('')
-      : '<div class="empty">No explanations written yet — run the insight stage.</div>';
+      : '<div class="empty">No explanations written yet. Run the insight stage.</div>';
   } catch { el.innerHTML = '<div class="empty">could not load explanations</div>'; }
 }
 
@@ -777,7 +777,7 @@ async function loadAgents() {
           <span class="legend-swatch" style="background:${colours[p.effective_policy] || 'var(--faint)'}"></span>
           <span>${esc(p.effective_policy)}</span><span class="num">${int(p.runs)} runs</span></div>`).join('')}
         ${s.policies.some((p) => p.effective_policy === 'unrecorded')
-          ? '<div class="legend-item" style="color:var(--muted);font-size:12px;margin-top:5px">“unrecorded” predates per-step policy tracking — those runs are not claimed as model decisions.</div>' : ''}
+          ? '<div class="legend-item" style="color:var(--muted);font-size:12px;margin-top:5px">“unrecorded” predates per-step policy tracking. Those runs are not claimed as model decisions.</div>' : ''}
       </div>`;
 
     $('#run-agent').innerHTML = '<option value="">All agents</option>'
@@ -796,7 +796,7 @@ async function loadRuns() {
     el.innerHTML = `<div class="rows">${d.rows.map((r) => `
       <div class="row run-row" data-run="${r.agent_run_id}">
         <span class="pill ${r.succeeded ? 'ok' : 'bad'}">${r.succeeded ? 'met' : 'gave up'}</span>
-        <span class="name"><span class="name-main"><strong>${esc(r.agent)}</strong> — ${esc(r.goal)}</span></span>
+        <span class="name"><span class="name-main"><strong>${esc(r.agent)}</strong>: ${esc(r.goal)}</span></span>
         <span class="pill ${policyClass(r.effective_policy)}">${esc(r.effective_policy)}</span>
         <span class="num">${r.steps} steps</span>
         <span class="num">${int(r.elapsed_ms)} ms</span>
@@ -916,7 +916,7 @@ async function ask(question) {
         <div class="p-src">${esc(p.publisher)}${p.page ? ` · page ${p.page}` : ''}</div>
         ${esc(String(p.excerpt).slice(0, 190))}…</div>`).join('');
     const cites = (d.citations || []).slice(0, 3).map((c) =>
-      `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">↗ ${esc(c.publisher)} — ${esc(c.title || c.source_url)}</a>`).join('');
+      `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">↗ ${esc(c.publisher)}: ${esc(c.title || c.source_url)}</a>`).join('');
     thinking.innerHTML = `
       <div class="meta"><span class="pill ${d.grounded ? 'ok' : 'bad'}">${d.grounded ? 'every figure traced' : 'ungrounded'}</span>
         <span class="pill">${esc(d.intent)}</span></div>

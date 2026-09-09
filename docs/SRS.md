@@ -45,14 +45,14 @@ It is written to be implementable. Where the earlier proposal named platform cap
 **Out of scope for the initial release**
 - Real-time flight-level or shipment-level tracking
 - Non-public or commercially licensed datasets
-- Global (non-India) sources — deferred to Phase 2
-- Maritime and rail freight — deferred to Phase 3
+- Global (non-India) sources, deferred to Phase 2
+- Maritime and rail freight, deferred to Phase 3
 
 ### 1.3 Definitions
 
 | Term | Meaning |
 |---|---|
-| **EXIM** | Export–Import trade data |
+| **EXIM** | Export-Import trade data |
 | **Fact grain** | The lowest level at which a measure is stored: airport × period × direction × commodity × airline |
 | **Conformed dimension** | A dimension table shared across all facts, so metrics are comparable across sources |
 | **Provenance** | The recorded chain from a stored number back to the source document it was parsed from |
@@ -65,7 +65,7 @@ It is written to be implementable. Where the earlier proposal named platform cap
 
 ### 2.1 Problem statement
 
-Indian air-cargo data exists but the intelligence does not. Datasets are published across multiple aviation and government sources — the Directorate General of Civil Aviation (DGCA), the Airports Authority of India (AAI), the Open Government Data portal, and individual airport operators — but they are fragmented, inconsistent, and difficult to analyse collectively.
+Indian air-cargo data exists but the intelligence does not. Datasets are published across multiple aviation and government sources (the Directorate General of Civil Aviation (DGCA), the Airports Authority of India (AAI), the Open Government Data portal, and individual airport operators) but they are fragmented, inconsistent, and difficult to analyse collectively.
 
 Analysts must manually gather, clean, reconcile, and analyse these datasets to answer questions about cargo performance, airport growth, commodity movement, and airline logistics trends.
 
@@ -219,7 +219,7 @@ Agent 6 has no database access and no arithmetic responsibility. It receives a s
 | ID | Requirement | Acceptance criterion |
 |---|---|---|
 | FR-6.1 | Forecast short-horizon cargo volume | MAPE ≤ 12% at a 3-month horizon, beating a seasonal-naive baseline |
-| FR-6.2 | Publish prediction intervals | 80% intervals achieve 75–85% empirical coverage in backtest |
+| FR-6.2 | Publish prediction intervals | 80% intervals achieve 75-85% empirical coverage in backtest |
 | FR-6.3 | Validate with time-based splits | No random splitting; rolling-origin backtest only |
 
 ### FR-7 · Conversational querying
@@ -366,7 +366,7 @@ without forcing either into the other's shape.
 | A2 | Source inconsistencies are mechanically normalisable | Differences are in format, unit, and identifier rather than in meaning | Manual crosswalk maintenance increases |
 | A3 | Monthly grain is sufficient for the stated questions | Published sources report monthly | Finer-grained questions cannot be answered without new sources |
 | A4 | Historical depth supports seasonal modelling | At least three years of monthly history is available per major airport | Seasonal decomposition and SARIMA degrade; forecasts fall back to simpler baselines |
-| A5 | The initial release uses a limited source set | Proof-of-concept scope | None — the architecture is source-pluggable by design |
+| A5 | The initial release uses a limited source set | Proof-of-concept scope | None, the architecture is source-pluggable by design |
 
 **Constraints**
 
@@ -393,7 +393,7 @@ without forcing either into the other's shape.
 
 | Outcome | Measure | Target |
 |---|---|---|
-| Reduced analyst effort | Manual compilation hours per reporting cycle | 60–70% reduction |
+| Reduced analyst effort | Manual compilation hours per reporting cycle | 60-70% reduction |
 | Faster insight generation | Time from source publication to available insight | ≤ 24 hours |
 | Auditable analysis | Share of published numbers traceable to a source document | 100% |
 | Improved logistics strategy | Growth airports, emerging commodities, and route opportunities surfaced without manual analysis | Delivered as standing dashboards |

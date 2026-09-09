@@ -205,9 +205,9 @@ def belly_dependency(session: Session = Depends(get_session)) -> dict:
         # per departure. Either alone is suggestive; together they are the
         # difference between a freighter and a belly-hold seller.
         if not carries_pax:
-            kind, reading = "freighter", "carries no passengers — freight is the whole operation"
+            kind, reading = "freighter", "carries no passengers, freight is the whole operation"
         elif mean_tpd is not None and mean_tpd >= 5:
-            kind, reading = "freighter", f"lifts {mean_tpd} tonnes per departure — freighter aircraft"
+            kind, reading = "freighter", f"lifts {mean_tpd} tonnes per departure, freighter aircraft"
         else:
             kind, reading = "belly", describe_correlation(r)
 

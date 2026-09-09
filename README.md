@@ -48,9 +48,9 @@
 
 **Problem.** India's air-cargo EXIM data is public but scattered. DGCA publishes traffic statistics as PDFs, the Airports Authority of India (AAI) publishes monthly cargo reports in its own layout, `data.gov.in` exposes yet another schema, and individual airport operators publish their own numbers. The units disagree (kg vs. MT vs. tonnes), the airport identifiers disagree (IATA vs. ICAO vs. free-text city names), and the reporting periods disagree (calendar month vs. Indian fiscal year). An analyst who wants to answer *"which airports grew fastest in pharma exports last quarter?"* spends days reconciling spreadsheets before analysis even starts.
 
-**Solution.** A pipeline of six specialised agents that ingest those sources, reconcile them into a single governed warehouse, then run statistical trend, anomaly, and forecast models over the result. A language model sits on top as a *narrator and query planner* — not as the analytics engine. Every number it reports is traced back to the source document it came from, so answers are auditable rather than plausible.
+**Solution.** A pipeline of six specialised agents that ingest those sources, reconcile them into a single governed warehouse, then run statistical trend, anomaly, and forecast models over the result. A language model sits on top as a *narrator and query planner*, not as the analytics engine. Every number it reports is traced back to the source document it came from, so answers are auditable rather than plausible.
 
-**Why it matters.** Air cargo underpins pharmaceutical supply chains, electronics exports, and e-commerce logistics. The stakeholders who need this data — aviation authorities planning terminal capacity, freight forwarders bidding on lanes, policy teams shaping export strategy — currently make those calls on stale, hand-assembled spreadsheets. The target is to cut that manual compilation effort by 60–70% and move the insight latency from weeks to minutes.
+**Why it matters.** Air cargo underpins pharmaceutical supply chains, electronics exports, and e-commerce logistics. The stakeholders who need this data (aviation authorities planning terminal capacity, freight forwarders bidding on lanes, policy teams shaping export strategy) currently make those calls on stale, hand-assembled spreadsheets. The target is to cut that manual compilation effort by 60-70% and move the insight latency from weeks to minutes.
 
 **The design principle that shapes everything below:** *the language model never computes a number.* Metrics come from SQL over a governed semantic layer; models come from `statsmodels`. The LLM classifies intent, plans queries against an allowlisted view, and writes prose over results it is handed. This is what makes "source-cited" a real guarantee instead of a marketing line.
 
@@ -65,10 +65,10 @@
 | **Multi-source ingestion** | Pulls DGCA, AAI, `data.gov.in`, and airport-operator releases on a schedule. Handles PDF table extraction, Excel, and CSV, checksums every artefact, and records full provenance. |
 | **Automated reconciliation** | Canonicalises airport codes, normalises tonnage units, aligns fiscal-to-calendar periods, and deduplicates overlapping reports into one conformed fact table. |
 | **Trend intelligence** | Computes YoY / MoM / CAGR, market-share shift and seasonally adjusted growth across airport, airline and direction. |
-| **Operating efficiency** | Cargo load factor (freight tonne-km over capacity offered), tonnes lifted per departure, mail share and freight per passenger — the measures that separate a freighter from a belly hold. Blue Dart runs at 68% and 20.6 t/departure; Go Air at 5.2% and 0.88. |
+| **Operating efficiency** | Cargo load factor (freight tonne-km over capacity offered), tonnes lifted per departure, mail share and freight per passenger, the measures that separate a freighter from a belly hold. Blue Dart runs at 68% and 20.6 t/departure; Go Air at 5.2% and 0.88. |
 | **Growth attribution** | Decomposes national change into per-airport contributions measured against the *national* base, so the parts sum to the national figure rather than merely ranking movers. Delhi accounts for 2.93 points of the 11.30% rise; Kolkata for −0.28. |
 | **Growth decomposition** | Freight is flights multiplied by tonnes per flight, so a year's change splits exactly into a capacity effect and an intensity effect. Chennai grew 10.3% while losing 2,258 flights, because each remaining departure carried a third more. |
-| **Market concentration** | Herfindahl–Hirschman index reported with the effective number of equally sized airports beside it, because an HHI communicates nothing on its own. |
+| **Market concentration** | Herfindahl-Hirschman index reported with the effective number of equally sized airports beside it, because an HHI communicates nothing on its own. |
 | **Anomaly detection** | Flags unusual movements two ways and records which fired: `stl_residual` removes seasonality before scoring, `robust_z` uses median and MAD rather than mean and standard deviation so one spike cannot hide the next, and `consensus` marks the months both agree on. |
 | **Root-cause narratives** | Generates a plain-language explanation for each flagged anomaly, grounded in correlated series and the source rows that triggered it. |
 | **Short-term forecasting** | SARIMA and gradient-boosted baselines with rolling-origin backtesting, published with prediction intervals rather than bare point estimates. |
@@ -91,7 +91,7 @@ not import is a claim a reader cannot check.
 | Dashboard | Single-page app served by the API, inline SVG | No framework and no build step. One bar chart does not justify a charting dependency, and same-origin removes the CORS dance. |
 | API | FastAPI, Pydantic v2, Uvicorn | Typed contracts that generate the OpenAPI spec the dashboard consumes. |
 | Agents | Custom loop with pluggable policies | A goal, tools, a budget and a recorded trace. The policy is heuristic by default and a language model when one is configured. |
-| Reasoning layer | AWS Bedrock, Converse API | One request shape across Nova, Llama and Mistral, so swapping the model is a config change. Used only to choose a tool or narrate supplied rows — never to compute a figure. |
+| Reasoning layer | AWS Bedrock, Converse API | One request shape across Nova, Llama and Mistral, so swapping the model is a config change. Used only to choose a tool or narrate supplied rows, never to compute a figure. |
 | Retrieval | `pgvector` (HNSW), Postgres FTS, Titan embeddings | Dense and lexical retrievers fail differently; fusing them on rank fixes queries that either alone gets wrong. Falls back to an offline hashed TF-IDF embedder with no credentials. |
 | Ingestion | `httpx`, `pdfplumber`, `pandas` | DGCA and AAI publish tabular data inside PDFs; extraction is a first-class problem here, not a footnote. |
 | Warehouse | PostgreSQL 17, SQLAlchemy, Alembic | One store for facts, provenance and agent output, with the guarantees held in the schema. |
@@ -103,7 +103,7 @@ not import is a claim a reader cannot check.
 
 ## System Architecture
 
-The system is four layers stacked bottom-up. **Ingestion** treats every external source as unreliable: it downloads, checksums, and archives the raw artefact before parsing, so a re-parse never requires re-fetching. **The warehouse** is the single source of truth — a star schema where every fact row carries a foreign key to the source document that produced it. **The agent pipeline** reads from and writes back to that warehouse, enriching it with trends, anomalies, forecasts, and narratives. **The serving layer** exposes all of it through a REST API that both the dashboard and the chat interface consume, so there is exactly one implementation of every metric.
+The system is four layers stacked bottom-up. **Ingestion** treats every external source as unreliable: it downloads, checksums, and archives the raw artefact before parsing, so a re-parse never requires re-fetching. **The warehouse** is the single source of truth, a star schema where every fact row carries a foreign key to the source document that produced it. **The agent pipeline** reads from and writes back to that warehouse, enriching it with trends, anomalies, forecasts, and narratives. **The serving layer** exposes all of it through a REST API that both the dashboard and the chat interface consume, so there is exactly one implementation of every metric.
 
 ```mermaid
 flowchart TD
@@ -195,7 +195,7 @@ flowchart LR
 | **2. Cleaning & Reconciliation** | Staging tables | Conformed `fact_cargo_movement` | Code canonicalisation, unit normalisation to kilograms, fiscal-to-calendar alignment, deduplication on the natural key `(grain, period, airport, airline, direction, publisher, measure)`, declared `NULLS NOT DISTINCT` because Postgres treats NULLs as distinct by default and a null airline would otherwise let the same airport month be inserted twice |
 | **3. Trend Analysis** | Fact table | `trend` rows | YoY / MoM / CAGR, market-share shift, STL seasonal decomposition |
 | **4. Anomaly Detection** | Fact + trend | `anomaly` rows with severity | STL residual z-score, robust (median/MAD) z-score, consensus of the two, a structural detector for services starting and stopping (which no z-score can see, having no history to deviate from), and guards against launch curves reading as growth |
-| **5. Forecast** | Fact table | `forecast` rows with intervals | Five candidates — naive, drift, recent-mean, seasonal-naive, SARIMA — each scored by rolling-origin backtest on the history it needs; the winner publishes only if it clears an error bar |
+| **5. Forecast** | Fact table | `forecast` rows with intervals | Five candidates (naive, drift, recent-mean, seasonal-naive, SARIMA), each scored by rolling-origin backtest on the history it needs; the winner publishes only if it clears an error bar |
 | **6. Insight Narrative** | Anomaly + trend + forecast | `insight` rows with citations | LLM writes prose over supplied rows only; every claim carries a `source_document` reference |
 
 > **Note on agent 6.** It receives a structured payload of already-computed rows and is instructed to explain them. It has no database access and no arithmetic responsibility. If it cannot ground a claim in the rows it was handed, the insight is rejected rather than published.
@@ -264,7 +264,7 @@ rather than trusted.
 
 ## Application Flow
 
-The chat path is the most interesting one, because it is where grounding is enforced. A question never becomes free-form SQL — it is classified, mapped onto the semantic layer's registered metrics, compiled to SQL against read-only allowlisted views, and validated before a single word of prose is written.
+The chat path is the most interesting one, because it is where grounding is enforced. A question never becomes free-form SQL: it is classified, mapped onto the semantic layer's registered metrics, compiled to SQL against read-only allowlisted views, and validated before a single word of prose is written.
 
 ```mermaid
 sequenceDiagram
@@ -367,7 +367,7 @@ erDiagram
 > an early probe for the others requested lowercase filenames, got a 404,
 > and the absence was recorded as "not published" rather than "wrong URL".
 > Annexure II (aircraft movements) and III (passengers) are published in the
-> same layout and are now ingested — 19,905 rows across 65 documents and 140
+> same layout and are now ingested: 19,905 rows across 65 documents and 140
 > airports. They are the denominators freight had been missing.
 
 
@@ -378,9 +378,9 @@ responded, not what was hoped for.
 |---|---|---|---|
 | **AAI** traffic news, Annexure IV | ✅ **live** | PDF (bilingual) | Airport × month × international/domestic/total, in MT |
 | **Eurostat** `avia_gooa` | ✅ **live** | JSON-stat API | Airport × year × coverage, in tonnes |
-| **OpenFlights** crosswalk | ✅ **live** | CSV | 7,698 airports — reference data, not cargo |
+| **OpenFlights** crosswalk | ✅ **live** | CSV | 7,698 airports, reference data, not cargo |
 | **`data.gov.in`** (OGD) | ✅ live with one free key | REST catalogue + REST | 373 aviation datasets → 146 air-cargo, **airline × fiscal year** |
-| **DGCA** traffic statistics | ↩︎ covered via OGD | — | DGCA data is republished on `data.gov.in`, so the JS portal need not be scraped |
+| **DGCA** traffic statistics | ↩︎ covered via OGD | n/a | DGCA data is republished on `data.gov.in`, so the JS portal need not be scraped |
 | **World Bank** `IS.AIR.GOOD.MT.K1` | ⚠️ degraded | REST | Endpoint timed out repeatedly from our network |
 
 ### Two grains, not one
@@ -423,34 +423,34 @@ Every fetch is checksummed and archived to `data/raw/` before parsing, so parser
 
 - **Airport identity.** Canonicalise IATA / ICAO / free-text city names against a curated `dim_airport` crosswalk; unresolved names are quarantined for manual mapping rather than silently dropped.
 - **Units.** Detect and normalise kg / MT / tonnes to kilograms. Where a source is ambiguous, magnitude heuristics against the airport's historical range flag it for review.
-- **Periods.** Convert Indian fiscal-year reporting (April–March) to calendar months so sources are comparable.
-- **Deduplication.** Overlapping reports are resolved by the natural key `(grain, period, airport, airline, direction, publisher, measure)`, enforced by a unique constraint declared `NULLS NOT DISTINCT`. Postgres treats NULLs as distinct by default, so without that clause a null `airline_id` would let the same airport month be inserted twice — which is exactly how `BENGALURU (BIAL)` and Frankfurt were double-counted before it was added. A republished month overwrites rather than appends, so a correction fully supersedes the original.
+- **Periods.** Convert Indian fiscal-year reporting (April-March) to calendar months so sources are comparable.
+- **Deduplication.** Overlapping reports are resolved by the natural key `(grain, period, airport, airline, direction, publisher, measure)`, enforced by a unique constraint declared `NULLS NOT DISTINCT`. Postgres treats NULLs as distinct by default, so without that clause a null `airline_id` would let the same airport month be inserted twice, which is exactly how `BENGALURU (BIAL)` and Frankfurt were double-counted before it was added. A republished month overwrites rather than appends, so a correction fully supersedes the original.
 - **Validation.** Great Expectations-style assertions gate the load: non-negative tonnage, referential integrity, and period-over-period change within a plausible band.
 
 ### 3. Transformation & feature engineering
 
 Engineered for the forecast and anomaly models:
 
-- Calendar features — month, quarter, fiscal period, festival and holiday flags, working days.
-- Lag features — t-1, t-3, t-12 tonnage, plus rolling 3- and 12-month means.
-- Share features — airport share of national tonnage, commodity share of airport tonnage.
-- Seasonal decomposition — STL trend, seasonal, and residual components as explicit columns.
-- Growth features — YoY, MoM, and 3-month CAGR per series.
+- Calendar features: month, quarter, fiscal period, festival and holiday flags, working days.
+- Lag features: t-1, t-3, t-12 tonnage, plus rolling 3- and 12-month means.
+- Share features: airport share of national tonnage, commodity share of airport tonnage.
+- Seasonal decomposition: STL trend, seasonal, and residual components as explicit columns.
+- Growth features: YoY, MoM, and 3-month CAGR per series.
 
 ### 4. Model training
 
 | Task | Baseline | Candidate | Selection |
 |---|---|---|---|
-| Forecast | Naive (last value) | Drift, recent-mean, seasonal-naive, SARIMA (statsmodels) | Lowest MAPE under rolling-origin backtest, scored per candidate on the history it can actually use — SARIMA needs a season plus two, naive needs two, and judging them on a common minimum silently excluded the cheap models from short series |
+| Forecast | Naive (last value) | Drift, recent-mean, seasonal-naive, SARIMA (statsmodels) | Lowest MAPE under rolling-origin backtest, scored per candidate on the history it can actually use: SARIMA needs a season plus two, naive needs two, and judging them on a common minimum silently excluded the cheap models from short series |
 | Anomaly | Fixed ±2σ threshold | STL residual z-score, robust (median/MAD) z-score, the consensus of the two, and a structural detector for zero-to-traffic transitions | Mean and standard deviation are themselves moved by the outlier being looked for; median and MAD are not. Guards on baseline size, non-zero fraction and median-to-max ratio stop a launch curve reading as growth |
 
-Splitting is strictly **time-based** — a random split would leak future information into training and produce forecast scores that cannot survive contact with production. There is no hyperparameter search: with 79 reporting periods and series often under 20 points, tuning would fit the backtest rather than the data, so the candidate set is small and fixed and the backtest only chooses between members of it.
+Splitting is strictly **time-based**: a random split would leak future information into training and produce forecast scores that cannot survive contact with production. There is no hyperparameter search: with 79 reporting periods and series often under 20 points, tuning would fit the backtest rather than the data, so the candidate set is small and fixed and the backtest only chooses between members of it.
 
 ### 5. Evaluation
 
 - **Forecast:** MAPE and sMAPE as headline metrics, RMSE for scale sensitivity, and prediction-interval coverage to confirm the intervals mean what they claim.
-- **Anomaly:** recall against the `anomaly_label` set, reported alongside how many labels it rests on and how many came from a person. Precision is reported as *not measurable* rather than estimated, since a false positive requires a human to assert an alert was spurious — see [the labelled set](#the-labelled-set-behind-the-alert-metrics).
-- **Chat:** exact-match accuracy on a fixed question bank with known answers, plus **citation validity** — the share of numeric claims that resolve to a real source row. This is the gate that keeps the assistant honest.
+- **Anomaly:** recall against the `anomaly_label` set, reported alongside how many labels it rests on and how many came from a person. Precision is reported as *not measurable* rather than estimated, since a false positive requires a human to assert an alert was spurious. See [the labelled set](#the-labelled-set-behind-the-alert-metrics).
+- **Chat:** exact-match accuracy on a fixed question bank with known answers, plus **citation validity**, the share of numeric claims that resolve to a real source row. This is the gate that keeps the assistant honest.
 
 ---
 
@@ -461,17 +461,17 @@ growth*. It is not answerable from India's open data, and the reason is
 worth stating precisely rather than asserting that the data "does not
 exist".
 
-Commodity-wise trade **is** published — `Principal Commodity wise Export`
+Commodity-wise trade **is** published: `Principal Commodity wise Export`
 and its import counterpart, under Commerce rather than Aviation. Its
 columns are `commodity, country, unit, quantity_, value_us_million_`.
 There is no transport mode. Sea carries the large majority of India's trade
 by weight, so those figures inside an air-cargo product would imply an air
-attribution the source cannot support — a number that looks like an answer
+attribution the source cannot support, a number that looks like an answer
 and is not. Commodity-wise cargo traffic is published for **sea ports**,
 not for airports.
 
 What the data does support is asked instead, in two forms: **attribution**
-answers *where* the growth came from, and **decomposition** answers *how* —
+answers *where* the growth came from, and **decomposition** answers *how*:
 more flights, or fuller ones. Both are exact rather than indicative: the
 contributions sum to the national change, and the two effects sum to the
 airport's change.
@@ -481,7 +481,7 @@ airport's change.
 ## Does the model actually choose better than the rules?
 
 The architecture claims two interchangeable policies. That claim went
-unmeasured for the life of the project — and was quietly false, because the
+unmeasured for the life of the project, and was quietly false, because the
 model endpoint had never been reachable and every decision fell through to
 the heuristic while the trace still recorded the run as model-driven.
 
@@ -497,7 +497,7 @@ archived documents under both policies. Measured on Nova Lite, six AAI PDFs:
 
 **The model reproduces the hand-written tool sequence exactly, at 3.2× the
 latency.** So the heuristic stays the default and the model stays the
-escalation path for documents whose shape the rules do not anticipate —
+escalation path for documents whose shape the rules do not anticipate,
 which is now a measured conclusion rather than an assumption.
 
 The harness earned its place on its first real run by failing every model
@@ -513,7 +513,7 @@ project where that policy had never run.
 
 Entity present in the top three passages, six queries naming an Indian
 airport: **5 / 6** with Titan embeddings, and 5 / 6 with the offline hashed
-fallback. The difference between them is not that benchmark but paraphrase —
+fallback. The difference between them is not that benchmark but paraphrase:
 *"which gateway moves the most goods by air"* retrieves the freight tables
 with Titan and nothing useful without it, because it shares no tokens with
 how the corpus is worded.
@@ -526,7 +526,7 @@ The one miss is real rather than an absent entity: `hyderabad` appears in
 25 anomalies narrated by the model, **0 rejected as ungrounded**. Getting
 there required fixing the check rather than the model: the prompt showed
 kilograms while the check allowed only the tonne conversion, so a narrative
-quoting its evidence exactly was rejected — all 25 rejections were false.
+quoting its evidence exactly was rejected: all 25 rejections were false.
 Widening the check to accept either unit would have hidden the mismatch and
 let a genuine unit error through, so the prompt is denominated in tonnes to
 match the check instead.
@@ -546,13 +546,13 @@ match the check instead.
 | Ingestion | Documents either extracted or refused with a reason<br><sub>154 extracted, 44 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (198/198) | **met** |
 | Ingestion | INTL + DOM = TOTAL, recomputed from stored rows | ≥ 99% | 99.3% (1,640/1,651) | **met** |
 | Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
-| Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series — naive, drift, recent-mean, seasonal-naive, SARIMA — and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
+| Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series (naive, drift, recent-mean, seasonal-naive, SARIMA) and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
 | Forecast | Series with a publishable forecast<br><sub>of series still carrying traffic; reported beside the error because a median over published forecasts alone can be improved by publishing less</sub> | ≥ 70% | **74% (167/226)** | **met** |
-| Forecast | 80% interval coverage<br><sub>pooled over rolling-origin folds, counting how often the published band contained the actual — not averaged per series, which would weight a 3-fold series like a 30-fold one</sub> | 75–85% | **82.4% (413/501)** | **met** |
+| Forecast | 80% interval coverage<br><sub>pooled over rolling-origin folds, counting how often the published band contained the actual, not averaged per series, which would weight a 3-fold series like a 30-fold one</sub> | 75-85% | **82.4% (413/501)** | **met** |
 | Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 14 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.38</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
-| Anomaly | Precision at 80% recall<br><sub>the set holds no labelled *spurious* alert, so a precision over it is not evidence. The rule that would supply them checked 1,526 complete component triples and found the worst mismatch at 0.54% — rounding, not a defect. A false positive needs a person to assert an alert was spurious; no rule can</sub> | ≥ 0.70 | awaiting review | not measurable |
+| Anomaly | Precision at 80% recall<br><sub>the set holds no labelled *spurious* alert, so a precision over it is not evidence. The rule that would supply them checked 1,526 complete component triples and found the worst mismatch at 0.54%: rounding, not a defect. A false positive needs a person to assert an alert was spurious; no rule can</sub> | ≥ 0.70 | awaiting review | not measurable |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
@@ -571,7 +571,7 @@ claiming it all as modelling:
 
 | Change | Median MAPE |
 |---|---|
-| Previous logic — SARIMA only if it beat seasonal-naive | 16.7% |
+| Previous logic: SARIMA only if it beat seasonal-naive | 16.7% |
 | Five candidates, best chosen by backtest, all series | 14.9% |
 | Publishing only what clears a 35% error bar | **11.1%** |
 
@@ -581,7 +581,7 @@ error: a median over published forecasts can always be improved by
 publishing less, and the pair of numbers is the honest statement.
 
 The worst forecast previously published was wrong by **820%**. Nothing above
-34% is published now — a projection wrong by more than the quantity it
+34% is published now: a projection wrong by more than the quantity it
 predicts is not a forecast, and printing the error beside it does not make
 it one.
 
@@ -593,10 +593,10 @@ evidence:
 
 | Proxy | Why it was rejected |
 |---|---|
-| The publisher's own year-on-year change | It barely separates the populations — 33% of flagged and 27% of unflagged months exceed a 50% swing. Year-on-year movement and departure from a seasonal pattern are different questions. |
+| The publisher's own year-on-year change | It barely separates the populations: 33% of flagged and 27% of unflagged months exceed a 50% swing. Year-on-year movement and departure from a seasonal pattern are different questions. |
 | Persistence of the level shift | It marked 80% of unflagged months as genuine events. That is not a credible base rate; the rule was firing on ordinary variation. |
 
-What survives is narrow by design — `anomaly_label` holds only cases
+What survives is narrow by design: `anomaly_label` holds only cases
 nobody would argue about:
 
 - **A service starting or stopping.** Three zero months followed by three
@@ -607,7 +607,7 @@ nobody would argue about:
 
 **This second class turned out to be empty, and that is a result rather
 than a silence.** Across 1,526 complete INTERNATIONAL/DOMESTIC/TOTAL
-triples the worst mismatch is **0.54%** — 1.0 MT at a small airport, which
+triples the worst mismatch is **0.54%**, 1.0 MT at a small airport, which
 is rounding in the published source. `--report` prints the search
 alongside the empty count so a reader can tell the rule ran. The
 consequence is that no rule can supply a false positive here, and a better
@@ -615,27 +615,27 @@ rule would not change that.
 
 Seeding this set is what exposed the real defect: **the detector found 0 of
 41 unarguable transitions.** Both z-score detectors measure distance from a
-series' own past, and a service that has just begun has none — so the one
+series' own past, and a service that has just begun has none, so the one
 class of event an operations team most wants named was structurally
 invisible. A `service_started` / `service_stopped` detector now covers it,
-and these events outrank ordinary fluctuations in the feed — including in
+and these events outrank ordinary fluctuations in the feed, including in
 the API's ordering, which sorted on `abs(deviation_pct)` and so sent the
 one class with no deviation percentage to the bottom of the list.
 
 The two transitions are defined symmetrically: each names the month at the
-boundary that **carries traffic** — the first for a start, the last for a
+boundary that **carries traffic**: the first for a start, the last for a
 stop. Without that, a shutdown fired twice, once on the last trading month
 and again on the first silent one, and the second alert described a month
 in which nothing happened.
 
 The rule and the detector are deliberately **separate implementations** of
-one definition. Sharing code would make recall tautological — the detector
-scored against its own output — which is precisely why a genuine 0/41 was
+one definition. Sharing code would make recall tautological (the detector
+scored against its own output), which is precisely why a genuine 0/41 was
 possible. A test asserts the two agree, so they cannot drift apart silently.
 
 **Precision remains unmeasurable, and is reported that way.** A false
 positive requires a label asserting that an alert is *spurious*, and no
-rule can assert that — only a person looking at the month. The review queue
+rule can assert that, only a person looking at the month. The review queue
 exists for whoever does:
 
 ```bash
@@ -656,7 +656,7 @@ possible, and neither was added for the deployment:
 
 - The API imports no analytics. Forecasts, trends and anomalies are
   computed by the scheduled pipeline and read back as rows, so the serving
-  bundle needs neither `statsmodels` nor `scipy` — together those exceed
+  bundle needs neither `statsmodels` nor `scipy`: together those exceed
   the serverless size limit outright. `requirements.txt` is the serving
   subset; local development installs the full set from `pyproject.toml`.
 - The serving role holds `SELECT` on views and nothing else, so exposing
@@ -686,7 +686,7 @@ flowchart LR
 Two deployment defects were only findable by deploying. The migration chain
 could not build a database from scratch, because a constraint name that
 already carried its prefix was passed through the naming convention a second
-time. And `pyproject.toml` never declared `fastapi` — the venv had
+time. And `pyproject.toml` never declared `fastapi`: the venv had
 accumulated it, `requirements.txt` named it correctly, and the builder reads
 `pyproject.toml` in preference. Both had been latent since the project
 started; neither is reachable from a developer machine.
@@ -710,7 +710,7 @@ started; neither is reachable from a developer machine.
 - **Security:** the serving path connects as `aci_readonly`, which holds
   `SELECT` on eleven views and no rights at all on the tables beneath them.
   Retrieval reads through `v_document_chunk` and `v_rag_vocab` for the same
-  reason — when it was first wired up it queried the base tables directly
+  reason: when it was first wired up it queried the base tables directly
   and the role refused it, which is the confinement working rather than a
   bug in it.
   A test fails if any module under `api/`, `semantic/` or `reporting/`
@@ -774,14 +774,14 @@ Air-Cargo-Intelligence/
 ├── db/migrations/            # Alembic revisions
 ├── tests/
 │   ├── unit/                 # 288 tests
-│   └── fixtures/             # Golden AAI PDF — the layout-change tripwire
+│   └── fixtures/             # Golden AAI PDF, the layout-change tripwire
 ├── pyproject.toml
 └── README.md
 ```
 
 ## Getting Started
 
-> **Project status:** the architecture, data model, and specification are complete. Implementation is in progress — the commands below describe the intended developer workflow and will land alongside the services they invoke. Track progress in the [roadmap](#roadmap).
+> **Project status:** the architecture, data model, and specification are complete. Implementation is in progress: the commands below describe the intended developer workflow and will land alongside the services they invoke. Track progress in the [roadmap](#roadmap).
 
 ### Prerequisites
 
@@ -1001,29 +1001,29 @@ ruff check services tests
 The suite is ordered by bugs-caught-per-effort, and every case in it comes
 from a failure actually observed against live data:
 
-- **Golden-fixture parser tests** — `tests/fixtures/aai_annex4_sample.pdf`
+- **Golden-fixture parser tests**: `tests/fixtures/aai_annex4_sample.pdf`
   is a real AAI page. If AAI reshapes the table, CI fails instead of the
   pipeline silently ingesting nothing.
-- **Content-verification tests** — an HTML error page served as `.pdf`
+- **Content-verification tests**: an HTML error page served as `.pdf`
   with HTTP 200 must be refused, not parsed.
-- **Reconciliation tests** — `DELHI` must resolve to Indira Gandhi (DEL),
+- **Reconciliation tests**: `DELHI` must resolve to Indira Gandhi (DEL),
   not to Safdarjung; `BENGALURU (HAL)` must stay distinct from Kempegowda.
-- **Unit tests** — an unknown mass unit raises rather than defaulting,
+- **Unit tests**: an unknown mass unit raises rather than defaulting,
   because a silent wrong unit rescales every number downstream.
 
 ## Roadmap
 
-**Phase 1 · Foundation — complete**
+**Phase 1 · Foundation: complete**
 - [x] Requirements specification, system architecture, provenance design
 - [x] Agent loop with pluggable heuristic / model policies
 - [x] Discovery, extraction and reconciliation agents with full run traces
-- [x] AAI freight parser (bilingual PDF, three header layouts across 2023–2026)
+- [x] AAI freight parser (bilingual PDF, three header layouts across 2023-2026)
 - [x] Eurostat JSON-stat parser and the data.gov.in catalogue client
 - [x] Archive recovery: months the publisher no longer links but still serves
 - [x] Airport crosswalk plus a curated alias overlay; 99.6% reconciliation
 - [x] PostgreSQL star schema, Alembic migrations, idempotent loader
 
-**Phase 2 · Intelligence — complete**
+**Phase 2 · Intelligence: complete**
 - [x] Trend, anomaly and forecast analytics with rolling-origin backtesting
 - [x] Insight agent: grounded explanations written against detected anomalies
 - [x] Semantic layer and metric registry; read-only serving role
@@ -1033,14 +1033,14 @@ from a failure actually observed against live data:
 - [x] Scheduling, `/metrics`, and CI against a real Postgres
 - [x] Acceptance criteria measured rather than intended
 
-**Phase 3 · Scale — open**
-- [ ] Review enough alerts by hand to make precision measurable — the
+**Phase 3 · Scale: open**
+- [ ] Review enough alerts by hand to make precision measurable. The
       rule-derived labels cover recall, but only a person can call an alert
       spurious
 - [ ] More global sources (IATA, Eurostat beyond the eight airports held)
 - [ ] Route-level and lane-level intelligence
-- [ ] Commodity detail, which needs a source that publishes it —
-      see [the SRS](docs/SRS.md#82-warehouse-model) for why it is out of scope
+- [ ] Commodity detail, which needs a source that publishes it.
+      See [the SRS](docs/SRS.md#82-warehouse-model) for why it is out of scope
 - [ ] Multi-modal expansion into maritime and rail freight
 
 See [open issues](https://github.com/adarshcod30/Air-Cargo-Intelligence/issues).
@@ -1066,7 +1066,7 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 
 ## Contact
 
-**Adarsh Dwivedi** — [@adarshcod30](https://github.com/adarshcod30) · 23ucs509@lnmiit.ac.in
+**Adarsh Dwivedi**, [@adarshcod30](https://github.com/adarshcod30) · 23ucs509@lnmiit.ac.in
 
 Built with Anish Laddha, Hiitesh Gour, and Charu Chhabra at The LNM Institute of Information Technology, Jaipur.
 

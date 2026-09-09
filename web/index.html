@@ -96,7 +96,7 @@
         <strong>What this is.</strong> Cargo tonnage handled by Indian and
         international airports, assembled from published statistics. Every
         number below was read from a source document and can be traced back
-        to it — nothing here is estimated or generated.
+        to it, nothing here is estimated or generated.
       </div>
 
       <div class="kpis" id="kpis"></div>
@@ -208,7 +208,7 @@
       <div class="explainer">
         <strong>What drives the number.</strong> Tonnage says how much moved.
         These say how well, and where from. <em>Cargo load factor</em> is
-        freight tonne-kilometres over the capacity offered — it separates
+        freight tonne-kilometres over the capacity offered: it separates
         growth that came from flying more from growth that came from filling
         what was already flying.
       </div>
@@ -286,7 +286,7 @@
     <section class="view" data-view="forecast">
       <div class="explainer">
         <strong>How these are produced.</strong> Each series is fitted with
-        SARIMA — a statistical model for seasonal time series — and checked
+        SARIMA, a statistical model for seasonal time series, and checked
         by <em>rolling-origin backtesting</em>: the model is repeatedly asked
         to predict a month it was not shown, and the average error of those
         attempts is reported as MAPE. A 6% MAPE means past predictions were
@@ -299,7 +299,7 @@
       <article class="panel">
         <header class="panel-head">
           <div><h2>Projections</h2>
-            <p class="panel-sub">Predicted freight with an 80% interval — the range the model expects the true value to fall in four times out of five.</p></div>
+            <p class="panel-sub">Predicted freight with an 80% interval: the range the model expects the true value to fall in four times out of five.</p></div>
           <div class="controls">
             <select id="fc-grain" class="sel" aria-label="Grain">
               <option value="AIRPORT">Airports</option>
@@ -323,7 +323,7 @@
         each series, then months whose remainder is far from typical are
         flagged. <em>Expected</em> is what the seasonal pattern implied;
         <em>observed</em> is what was published. A large gap is not
-        necessarily an error — a new terminal opening looks the same as a
+        necessarily an error, a new terminal opening looks the same as a
         data problem, and both are worth a human look.
       </div>
 
@@ -363,7 +363,7 @@
       <article class="panel tall">
         <header class="panel-head">
           <div><h2>Ask the data</h2>
-            <p class="panel-sub">Questions are mapped onto registered metrics and answered by SQL. The model never calculates a figure — it reads rows it was handed.</p></div>
+            <p class="panel-sub">Questions are mapped onto registered metrics and answered by SQL. The model never calculates a figure: it reads rows it was handed.</p></div>
         </header>
         <div class="panel-body chat-body">
           <div class="chat-log" id="chat-log"></div>
@@ -395,7 +395,7 @@
         <strong>Why this exists.</strong> The data is assembled by agents that
         choose their own steps rather than following a fixed script. Each run
         records the goal, every tool it called, the reasoning behind the
-        choice and what came back — so a figure can be audited back through
+        choice and what came back: so a figure can be audited back through
         the decisions that produced it. A tool called more often than the runs
         that used it is one an agent had to retry.
       </div>
@@ -461,7 +461,7 @@
       <div class="explainer">
         <strong>Where every figure comes from.</strong> Each fact carries a
         foreign key to the document it was parsed from, enforced by the
-        database rather than by convention — a fact without a source cannot
+        database rather than by convention: a fact without a source cannot
         be stored at all.
       </div>
 

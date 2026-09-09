@@ -1,6 +1,6 @@
-# Air Cargo Brief — 2026-07
+# Air Cargo Brief: 2026-07
 
-_Generated 2026-09-08 04:57 UTC_
+_Generated 2026-09-09 21:22 UTC_
 
 **National total:** 372,264.7 MT across 138 airports, +10.8% year on year
 
@@ -23,17 +23,35 @@ _Generated 2026-09-08 04:57 UTC_
 
 | Entity | Period | Observed | Expected | Deviation | Severity |
 |---|---|---:|---:|---:|---|
-| Rajkot International Airport | 2026-07 | 212.9 | 57.8 | 268.3% | HIGH |
-| Rajkot International Airport | 2026-07 | 212.9 | 57.8 | 268.3% | HIGH |
-| Trivandrum International Airport | 2026-07 | 393.2 | 245.2 | 60.4% | MEDIUM |
-| Bagdogra Airport | 2026-07 | 1059.2 | 724.5 | 46.2% | MEDIUM |
 | Bagdogra Airport | 2026-07 | 1059.2 | 724.5 | 46.2% | MEDIUM |
 | Cochin International Airport | 2026-07 | 5914.1 | 4082.0 | 44.9% | MEDIUM |
-| Cochin International Airport | 2026-07 | 7437.0 | 5276.1 | 41.0% | MEDIUM |
+
+## Explanations
+
+**Bagdogra Airport domestic cargo fell sharply in 2025-04**
+
+In April 2025, Bagdogra Airport experienced a significant anomaly in domestic air cargo. The observed cargo tonnage was 657.0 metric tonnes, which is 42.2% lower than the expected 1137.6 metric tonnes. This deviation is classified as high severity and remains unexplained based on the provided data.
+
+**Imphal Airport domestic cargo rose sharply in 2024-10**
+
+In October 2024, Imphal Airport experienced a domestic air-cargo movement of 513.0 metric tonnes, which is 43.2% higher than the expected 358.3 metric tonnes. This anomaly is classified as high severity. The cause of this deviation is unexplained based on the provided data.
+
+**Devi Ahilyabai Holkar Airport total cargo rose sharply in 2025-10**
+
+In October 2025, Devi Ahilyabai Holkar Airport experienced a significant air-cargo anomaly. The observed cargo tonnage was 1225.8 metric tonnes, which is 43.2% higher than the expected 856.0 metric tonnes. This deviation is classified as high severity and remains unexplained based on the provided data.
+
+**Cochin International Airport international cargo rose sharply in 2026-07**
+
+In July 2026, Cochin International Airport experienced an international air-cargo anomaly with an observed tonnage of 5914.1 metric tonnes (MT), which is 44.9% higher than the expected 4082.0 MT. This anomaly is classified as medium severity and is currently unexplained.
+
+**Netaji Subhash Chandra Bose International Airport domestic cargo rose sharply in 2024-05**
+
+In May 2024, the Netaji Subhash Chandra Bose International Airport recorded a domestic air-cargo tonnage of 11549 metric tonnes, which is 45% higher than the expected 7964.1 metric tonnes. This significant deviation is classified as a high severity anomaly. The observed tonnage is unexplained by the surrounding series data.
+
 
 ## Sources
 
-- AAI: 36 documents, 11312 facts
+- AAI: 101 documents, 11312 facts
 - DATA_GOV_IN: 102 documents, 878 facts
 - EUROSTAT: 16 documents, 48 facts
 

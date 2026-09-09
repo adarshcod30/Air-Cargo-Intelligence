@@ -162,7 +162,7 @@ def _bar_chart(rows: list[dict], label_key: str, value_key: str,
 
 def _pct(v) -> str:
     if v is None:
-        return '<span class="muted">—</span>'
+        return '<span class="muted">n/a</span>'
     cls = "pos" if float(v) >= 0 else "neg"
     return f'<span class="{cls}">{float(v):+,.1f}%</span>'
 
@@ -180,7 +180,7 @@ def render_html(brief: Brief) -> str:
         head = "".join(f"<th>{h}</th>" for h in headers)
         body = "".join(
             "<tr>" + "".join(
-                f"<td>{_pct(r[c]) if c.endswith('_pct') else html.escape(str(r.get(c) if r.get(c) is not None else '—'))}</td>"
+                f"<td>{_pct(r[c]) if c.endswith('_pct') else html.escape(str(r.get(c) if r.get(c) is not None else 'n/a'))}</td>"
                 for c in cols) + "</tr>"
             for r in rows
         )
@@ -194,7 +194,7 @@ def render_html(brief: Brief) -> str:
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Air Cargo Brief — {brief.period}</title>
+<title>Air Cargo Brief: {brief.period}</title>
 <style>
  body {{ font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         color:#14181f; max-width:860px; margin:32px auto; padding:0 20px; }}
@@ -214,7 +214,7 @@ def render_html(brief: Brief) -> str:
           color:#5c6470; font-size:12px; }}
 </style></head><body>
 
-<h1>Air Cargo Brief — {brief.period}</h1>
+<h1>Air Cargo Brief: {brief.period}</h1>
 <div class="meta">Generated {brief.generated_at}</div>
 
 <div class="lede"><strong>National total:</strong> {national}</div>
@@ -224,7 +224,7 @@ def render_html(brief: Brief) -> str:
 {table(brief.headline_rows, ["airport_iata", "airport_name", "tonnage_mt", "yoy_pct"],
        ["Code", "Airport", "Tonnage (MT)", "YoY"])}
 
-<h2>Fastest growing <span class="meta">— at least 100 MT, because percentage growth below that is noise</span></h2>
+<h2>Fastest growing <span class="meta">at least 100 MT, because percentage growth below that is noise</span></h2>
 {table(brief.movers, ["airport_iata", "airport_name", "tonnage_mt", "yoy_pct"],
        ["Code", "Airport", "Tonnage (MT)", "YoY"])}
 
@@ -235,7 +235,7 @@ def render_html(brief: Brief) -> str:
 <h2>Explanations</h2>
 {insights}
 
-<h2>Forecasts <span class="meta">— 80% interval, with backtest error</span></h2>
+<h2>Forecasts <span class="meta">80% interval, with backtest error</span></h2>
 {table(brief.forecasts, ["entity_name", "period", "predicted_mt", "lower_mt", "upper_mt", "model", "mape"],
        ["Entity", "Period", "Predicted", "Lower", "Upper", "Model", "MAPE %"])}
 
@@ -252,7 +252,7 @@ def render_markdown(brief: Brief) -> str:
     """A plain-text form, for pasting into an email or a ticket."""
     t = brief.totals
     lines = [
-        f"# Air Cargo Brief — {brief.period}", "",
+        f"# Air Cargo Brief: {brief.period}", "",
         f"_Generated {brief.generated_at}_", "",
         f"**National total:** {t['national_mt']:,.1f} MT across {t['airports']} airports"
         + (f", {t['yoy_pct']:+,.1f}% year on year" if t.get("yoy_pct") is not None else ""),
@@ -260,7 +260,7 @@ def render_markdown(brief: Brief) -> str:
         "| Code | Airport | Tonnage (MT) | YoY |", "|---|---|---:|---:|",
     ]
     for r in brief.headline_rows:
-        yoy = f"{float(r['yoy_pct']):+,.1f}%" if r.get("yoy_pct") is not None else "—"
+        yoy = f"{float(r['yoy_pct']):+,.1f}%" if r.get("yoy_pct") is not None else "n/a"
         lines.append(f"| {r['airport_iata']} | {r['airport_name']} | {r['tonnage_mt']:,} | {yoy} |")
 
     lines += ["", "## Alerts", ""]
