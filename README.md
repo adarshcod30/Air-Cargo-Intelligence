@@ -426,6 +426,61 @@ Splitting is strictly **time-based** — a random split would leak future inform
 
 ---
 
+## Does the model actually choose better than the rules?
+
+The architecture claims two interchangeable policies. That claim went
+unmeasured for the life of the project — and was quietly false, because the
+model endpoint had never been reachable and every decision fell through to
+the heuristic while the trace still recorded the run as model-driven.
+
+`python -m services.evaluation.policy_ab` runs the same goal over the same
+archived documents under both policies. Measured on Nova Lite, six AAI PDFs:
+
+| | heuristic | `us.amazon.nova-lite-v1:0` |
+|---|---|---|
+| Documents extracted | 6 / 6 | 6 / 6 |
+| Mean steps | 5.0 | 5.0 |
+| ms per document | 2,018 | 6,522 |
+| Tokens | 0 | 15,584 |
+
+**The model reproduces the hand-written tool sequence exactly, at 3.2× the
+latency.** So the heuristic stays the default and the model stays the
+escalation path for documents whose shape the rules do not anticipate —
+which is now a measured conclusion rather than an assumption.
+
+The harness earned its place on its first real run by failing every model
+attempt for a reason that was not the model. `Agent._describe` rendered any
+list as `"N item(s)"`, so `rank_parsers` returning `['aai_freight_annex4']`
+reached the policy as the string `"1 item(s)"`. The heuristic never noticed
+because it reads the value out of context; a model sees only the
+observation, so it could not learn the parser's name and invented one. A
+framework defect that only one of two policies could ever expose, in a
+project where that policy had never run.
+
+### Retrieval
+
+Entity present in the top three passages, six queries naming an Indian
+airport: **5 / 6** with Titan embeddings, and 5 / 6 with the offline hashed
+fallback. The difference between them is not that benchmark but paraphrase —
+*"which gateway moves the most goods by air"* retrieves the freight tables
+with Titan and nothing useful without it, because it shares no tokens with
+how the corpus is worded.
+
+The one miss is real rather than an absent entity: `hyderabad` appears in
+193 chunks, more than any other city.
+
+### Narration
+
+25 anomalies narrated by the model, **0 rejected as ungrounded**. Getting
+there required fixing the check rather than the model: the prompt showed
+kilograms while the check allowed only the tonne conversion, so a narrative
+quoting its evidence exactly was rejected — all 25 rejections were false.
+Widening the check to accept either unit would have hidden the mismatch and
+let a genuine unit error through, so the prompt is denominated in tonnes to
+match the check instead.
+
+---
+
 ## Evaluation & Acceptance Targets
 
 > **Measured, not intended.** Every figure comes from

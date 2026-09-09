@@ -32,6 +32,11 @@ from services.warehouse.schema import (
 
 log = get_logger(__name__)
 
+# Rows per INSERT. Large enough that round-trip latency stops dominating,
+# small enough that one statement's parameter list stays well inside
+# Postgres' 65,535 bound parameters - these rows carry twelve columns.
+_BATCH = 500
+
 _PERIOD_RX = re.compile(r"^(\d{4})-(\d{2}|FY|A)$")
 
 
@@ -189,6 +194,42 @@ class WarehouseLoader:
 
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _natural_key(row: dict) -> tuple:
+        """The unique constraint's columns, in order."""
+        return (
+            row["grain"], row["period_id"], row["airport_id"], row["airline_id"],
+            row["direction"], row["publisher"], row["measure"],
+        )
+
+    @staticmethod
+    def _flush(s, pending: dict) -> None:
+        """Write the staged rows as one statement, then clear the buffer.
+
+        The loader used to issue one INSERT per fact and commit at the end.
+        On a unix socket that is 12,692 sub-millisecond round trips and
+        finishes in about seven seconds; against a managed database on
+        another continent the same code spends over half an hour with the
+        server idle in transaction, because the cost was never the write.
+        """
+        if not pending:
+            return
+        ins = insert(CargoFactRow).values(list(pending.values()))
+        s.execute(
+            ins.on_conflict_do_update(
+                constraint="fact_natural_key",
+                set_={
+                    "tonnage_kg": ins.excluded.tonnage_kg,
+                    "prior_year_tonnage_kg": ins.excluded.prior_year_tonnage_kg,
+                    "reported_change_pct": ins.excluded.reported_change_pct,
+                    "source_document_id": ins.excluded.source_document_id,
+                    "resolution_confidence": ins.excluded.resolution_confidence,
+                    "resolution_method": ins.excluded.resolution_method,
+                },
+            )
+        )
+        pending.clear()
+
     def load(self, facts_path: Path, ledger_path: Path | None = None) -> dict:
         """Load a facts JSONL file. Returns a summary."""
         facts = [json.loads(line) for line in Path(facts_path).open(encoding="utf-8")]
@@ -199,6 +240,9 @@ class WarehouseLoader:
                 ledger[d.get("doc_id", "")] = d
 
         loaded = skipped = 0
+        # Keyed by natural key so a repeat within a batch replaces rather
+        # than accumulating, which is what the per-row upsert did implicitly.
+        pending: dict[tuple, dict] = {}
         with Session(self.engine) as s:
             run = IngestRun(status="RUNNING")
             s.add(run)
@@ -225,35 +269,32 @@ class WarehouseLoader:
                     skipped += 1
                     continue
 
-                ins = insert(CargoFactRow).values(
-                    grain=grain, period_id=period_id, airport_id=airport_id,
-                    airline_id=airline_id, direction=fact.get("direction") or "TOTAL",
-                    tonnage_kg=max(0.0, float(fact.get("tonnage_kg") or 0.0)),
-                    prior_year_tonnage_kg=fact.get("prior_year_tonnage_kg"),
-                    reported_change_pct=fact.get("reported_change_pct"),
-                    publisher=fact.get("publisher") or "UNKNOWN",
-                    source_document_id=doc_id,
-                    resolution_confidence=fact.get("resolution_confidence"),
-                    resolution_method=fact.get("resolution_method"),
-                    measure=fact.get("measure") or "freight",
-                )
-                # A republished month must overwrite, not append. The whole
-                # measurement is refreshed, along with the document it now
-                # comes from, so a correction fully supersedes the original.
-                s.execute(
-                    ins.on_conflict_do_update(
-                        constraint="fact_natural_key",
-                        set_={
-                            "tonnage_kg": ins.excluded.tonnage_kg,
-                            "prior_year_tonnage_kg": ins.excluded.prior_year_tonnage_kg,
-                            "reported_change_pct": ins.excluded.reported_change_pct,
-                            "source_document_id": ins.excluded.source_document_id,
-                            "resolution_confidence": ins.excluded.resolution_confidence,
-                            "resolution_method": ins.excluded.resolution_method,
-                        },
-                    )
-                )
+                row = {
+                    "grain": grain, "period_id": period_id, "airport_id": airport_id,
+                    "airline_id": airline_id,
+                    "direction": fact.get("direction") or "TOTAL",
+                    "tonnage_kg": max(0.0, float(fact.get("tonnage_kg") or 0.0)),
+                    "prior_year_tonnage_kg": fact.get("prior_year_tonnage_kg"),
+                    "reported_change_pct": fact.get("reported_change_pct"),
+                    "publisher": fact.get("publisher") or "UNKNOWN",
+                    "source_document_id": doc_id,
+                    "resolution_confidence": fact.get("resolution_confidence"),
+                    "resolution_method": fact.get("resolution_method"),
+                    "measure": fact.get("measure") or "freight",
+                }
+                # Later rows supersede earlier ones for the same natural key,
+                # which is the same last-wins rule the per-row upsert had.
+                # Deduplicating here is not an optimisation: Postgres rejects
+                # a multi-row INSERT whose ON CONFLICT would touch one row
+                # twice ("cannot affect row a second time"), and a republished
+                # month legitimately contains repeats.
+                pending[self._natural_key(row)] = row
                 loaded += 1
+
+                if len(pending) >= _BATCH:
+                    self._flush(s, pending)
+
+            self._flush(s, pending)
 
             run.status = "COMPLETE"
             run.facts_loaded = loaded
