@@ -52,7 +52,7 @@
 
 **Why it matters.** Air cargo underpins pharmaceutical supply chains, electronics exports, and e-commerce logistics. The stakeholders who need this data — aviation authorities planning terminal capacity, freight forwarders bidding on lanes, policy teams shaping export strategy — currently make those calls on stale, hand-assembled spreadsheets. The target is to cut that manual compilation effort by 60–70% and move the insight latency from weeks to minutes.
 
-**The design principle that shapes everything below:** *the language model never computes a number.* Metrics come from SQL over a governed semantic layer; models come from `statsmodels` and `scikit-learn`. The LLM classifies intent, plans queries against an allowlisted view, and writes prose over results it is handed. This is what makes "source-cited" a real guarantee instead of a marketing line.
+**The design principle that shapes everything below:** *the language model never computes a number.* Metrics come from SQL over a governed semantic layer; models come from `statsmodels`. The LLM classifies intent, plans queries against an allowlisted view, and writes prose over results it is handed. This is what makes "source-cited" a real guarantee instead of a marketing line.
 
 **Keywords:** `air-cargo` `logistics-analytics` `multi-agent-systems` `data-engineering` `etl-pipeline` `time-series-forecasting` `anomaly-detection` `text-to-sql` `fastapi` `nextjs` `postgresql` `open-government-data`
 
@@ -64,8 +64,12 @@
 |---|---|
 | **Multi-source ingestion** | Pulls DGCA, AAI, `data.gov.in`, and airport-operator releases on a schedule. Handles PDF table extraction, Excel, and CSV, checksums every artefact, and records full provenance. |
 | **Automated reconciliation** | Canonicalises airport codes, normalises tonnage units, aligns fiscal-to-calendar periods, and deduplicates overlapping reports into one conformed fact table. |
-| **Trend intelligence** | Computes YoY / MoM / CAGR, market-share shift and seasonally adjusted growth across airport, airline and direction. Commodity is out of scope: no public source publishes cargo split that way — see [the SRS](docs/SRS.md#82-warehouse-model). |
-| **Anomaly detection** | Flags unusual movements via STL residual z-scores plus an Isolation Forest ensemble, scored by severity and deduplicated against known seasonality. |
+| **Trend intelligence** | Computes YoY / MoM / CAGR, market-share shift and seasonally adjusted growth across airport, airline and direction. |
+| **Operating efficiency** | Cargo load factor (freight tonne-km over capacity offered), tonnes lifted per departure, mail share and freight per passenger — the measures that separate a freighter from a belly hold. Blue Dart runs at 68% and 20.6 t/departure; Go Air at 5.2% and 0.88. |
+| **Growth attribution** | Decomposes national change into per-airport contributions measured against the *national* base, so the parts sum to the national figure rather than merely ranking movers. Delhi accounts for 2.93 points of the 11.30% rise; Kolkata for −0.28. |
+| **Growth decomposition** | Freight is flights multiplied by tonnes per flight, so a year's change splits exactly into a capacity effect and an intensity effect. Chennai grew 10.3% while losing 2,258 flights, because each remaining departure carried a third more. |
+| **Market concentration** | Herfindahl–Hirschman index reported with the effective number of equally sized airports beside it, because an HHI communicates nothing on its own. |
+| **Anomaly detection** | Flags unusual movements two ways and records which fired: `stl_residual` removes seasonality before scoring, `robust_z` uses median and MAD rather than mean and standard deviation so one spike cannot hide the next, and `consensus` marks the months both agree on. |
 | **Root-cause narratives** | Generates a plain-language explanation for each flagged anomaly, grounded in correlated series and the source rows that triggered it. |
 | **Short-term forecasting** | SARIMA and gradient-boosted baselines with rolling-origin backtesting, published with prediction intervals rather than bare point estimates. |
 | **Conversational analyst** | Natural-language questions resolved through a governed semantic layer to read-only SQL, answered with inline citations to source documents. |
@@ -91,7 +95,7 @@ not import is a claim a reader cannot check.
 | Retrieval | `pgvector` (HNSW), Postgres FTS, Titan embeddings | Dense and lexical retrievers fail differently; fusing them on rank fixes queries that either alone gets wrong. Falls back to an offline hashed TF-IDF embedder with no credentials. |
 | Ingestion | `httpx`, `pdfplumber`, `pandas` | DGCA and AAI publish tabular data inside PDFs; extraction is a first-class problem here, not a footnote. |
 | Warehouse | PostgreSQL 17, SQLAlchemy, Alembic | One store for facts, provenance and agent output, with the guarantees held in the schema. |
-| Analytics | `statsmodels`, `scikit-learn`, `numpy` | Classical time series suits monthly aggregates with strong seasonality and short history. |
+| Analytics | `statsmodels` (SARIMAX, STL), `numpy` | Classical time series suits monthly aggregates with strong seasonality and short history. No deep model is used, and none is warranted at 36 months of data. |
 | Hosting | Vercel (serverless) + Neon Postgres | The read path imports no analytics, so it fits a serverless function; forecasts arrive as rows. Chosen over a sleeping free tier so a portfolio link is always warm. |
 | Scheduling | Plain scheduler + GitHub Actions cron | One linear daily chain over a few public endpoints. A workflow engine would add a dependency without removing a problem. |
 | Observability | Prometheus exposition at `/metrics` | Fact counts, source staleness and last-run status. |
@@ -177,7 +181,7 @@ flowchart LR
     A["1 · Ingestion<br/><small>fetch, checksum, provenance</small>"]
     B["2 · Cleaning<br/><small>codes, units, periods, dedup</small>"]
     C["3 · Trend<br/><small>YoY, CAGR, share shift</small>"]
-    D["4 · Anomaly<br/><small>STL + Isolation Forest</small>"]
+    D["4 · Anomaly<br/><small>STL residual + robust z</small>"]
     E["5 · Forecast<br/><small>SARIMA / XGBoost</small>"]
     F["6 · Narrative<br/><small>grounded explanation</small>"]
 
@@ -188,9 +192,9 @@ flowchart LR
 | Agent | Input | Output | Method |
 |---|---|---|---|
 | **1. Ingestion** | Source registry | Raw artefacts + `source_document` rows | Scheduled fetch, SHA-256 checksum, content-type routing to the right parser |
-| **2. Cleaning & Reconciliation** | Staging tables | Conformed `fact_cargo_movement` | Code canonicalisation, unit normalisation to kilograms, fiscal-to-calendar alignment, fuzzy dedup on `(airport, period, direction, commodity)` |
+| **2. Cleaning & Reconciliation** | Staging tables | Conformed `fact_cargo_movement` | Code canonicalisation, unit normalisation to kilograms, fiscal-to-calendar alignment, deduplication on the natural key `(grain, period, airport, airline, direction, publisher, measure)`, declared `NULLS NOT DISTINCT` because Postgres treats NULLs as distinct by default and a null airline would otherwise let the same airport month be inserted twice |
 | **3. Trend Analysis** | Fact table | `trend` rows | YoY / MoM / CAGR, market-share shift, STL seasonal decomposition |
-| **4. Anomaly Detection** | Fact + trend | `anomaly` rows with severity | STL residual z-score, Isolation Forest ensemble, seasonality-aware suppression |
+| **4. Anomaly Detection** | Fact + trend | `anomaly` rows with severity | STL residual z-score, robust (median/MAD) z-score, consensus of the two, with guards against launch curves reading as growth |
 | **5. Forecast** | Fact table | `forecast` rows with intervals | SARIMA baseline, XGBoost with lag/calendar features, rolling-origin backtest |
 | **6. Insight Narrative** | Anomaly + trend + forecast | `insight` rows with citations | LLM writes prose over supplied rows only; every claim carries a `source_document` reference |
 
@@ -272,10 +276,10 @@ sequenceDiagram
     participant LLM as LLM Adapter
     participant DB as PostgreSQL
 
-    U->>W: "Which commodities drove cargo growth last quarter?"
+    U->>W: "Which airports handle the most cargo?"
     W->>API: POST /api/v1/chat/query
     API->>LLM: Classify intent + extract entities
-    LLM-->>API: {intent: trend_ranking, dim: commodity, period: Q3}
+    LLM-->>API: {intent: airport_ranking, direction: TOTAL, period: latest}
     API->>SL: Resolve to registered metrics
     SL->>SL: Compile to read-only SQL (allowlisted views)
     SL->>DB: Execute
@@ -296,25 +300,39 @@ A conventional star schema. The detail that matters is `source_document`: every 
 
 ```mermaid
 erDiagram
-    DIM_DATE ||--o{ FACT_CARGO_MOVEMENT : "period"
+    DIM_PERIOD ||--o{ FACT_CARGO_MOVEMENT : "period"
     DIM_AIRPORT ||--o{ FACT_CARGO_MOVEMENT : "handled at"
     DIM_AIRLINE ||--o{ FACT_CARGO_MOVEMENT : "carried by"
-    DIM_COMMODITY ||--o{ FACT_CARGO_MOVEMENT : "of type"
     SOURCE_DOCUMENT ||--o{ FACT_CARGO_MOVEMENT : "sourced from"
+    SOURCE_DOCUMENT ||--o{ FACT_OPERATING_METRIC : "sourced from"
+    SOURCE_DOCUMENT ||--o{ DOCUMENT_CHUNK : "chunked into"
+    DIM_PERIOD ||--o{ FACT_OPERATING_METRIC : "period"
     INGEST_RUN ||--o{ SOURCE_DOCUMENT : "produced"
     FACT_CARGO_MOVEMENT ||--o{ ANOMALY : "flagged as"
     FACT_CARGO_MOVEMENT ||--o{ FORECAST : "projected as"
     ANOMALY ||--o{ INSIGHT : "explained by"
+    AGENT_RUN ||--o{ AGENT_STEP : "decided"
 
     FACT_CARGO_MOVEMENT {
         bigint  fact_id PK
-        int     date_id FK
-        int     airport_id FK
-        int     airline_id FK
-        int     commodity_id FK
-        text    direction "EXPORT|IMPORT|DOMESTIC"
+        text    grain "AIRPORT|AIRLINE"
+        int     period_id FK
+        int     airport_id FK "null at airline grain"
+        int     airline_id FK "null at airport grain"
+        text    direction "INTERNATIONAL|DOMESTIC|TOTAL"
         numeric tonnage_kg
-        bigint  source_document_id FK
+        text    measure
+        bigint  source_document_id FK "NOT NULL"
+    }
+    FACT_OPERATING_METRIC {
+        bigint  metric_id PK
+        text    grain
+        text    entity_key "IATA code or carrier"
+        int     period_id FK
+        text    metric "ftk_million|atk_million|pax_carried|..."
+        numeric value
+        text    unit
+        bigint  source_document_id FK "NOT NULL"
     }
     DIM_AIRPORT {
         int  airport_id PK
@@ -327,11 +345,12 @@ erDiagram
     }
     SOURCE_DOCUMENT {
         bigint source_document_id PK
-        text   publisher "DGCA|AAI|DATA_GOV_IN|OPERATOR"
-        text   source_url
+        text   doc_key UK
+        text   publisher "AAI|DATA_GOV_IN|EUROSTAT"
+        text   source_url "credentials redacted by constraint"
         char   sha256
         date   published_on
-        text   raw_object_path
+        text   raw_path
     }
 ```
 
@@ -342,6 +361,15 @@ erDiagram
 ## Data & ML Pipeline
 
 ### 1. Data sources & collection
+
+> The traffic release publishes several annexures from one page. Only
+> Annexure IV, the freight tables, was read for most of this project's life;
+> an early probe for the others requested lowercase filenames, got a 404,
+> and the absence was recorded as "not published" rather than "wrong URL".
+> Annexure II (aircraft movements) and III (passengers) are published in the
+> same layout and are now ingested — 19,905 rows across 65 documents and 140
+> airports. They are the denominators freight had been missing.
+
 
 Each source below was probed directly; status reflects what actually
 responded, not what was hoped for.
@@ -396,7 +424,7 @@ Every fetch is checksummed and archived to `data/raw/` before parsing, so parser
 - **Airport identity.** Canonicalise IATA / ICAO / free-text city names against a curated `dim_airport` crosswalk; unresolved names are quarantined for manual mapping rather than silently dropped.
 - **Units.** Detect and normalise kg / MT / tonnes to kilograms. Where a source is ambiguous, magnitude heuristics against the airport's historical range flag it for review.
 - **Periods.** Convert Indian fiscal-year reporting (April–March) to calendar months so sources are comparable.
-- **Deduplication.** Overlapping reports are resolved on `(airport, period, direction, commodity)` with a publisher-precedence rule; the losing row is retained and marked superseded, never deleted.
+- **Deduplication.** Overlapping reports are resolved by the natural key `(grain, period, airport, airline, direction, publisher, measure)`, enforced by a unique constraint declared `NULLS NOT DISTINCT`. Postgres treats NULLs as distinct by default, so without that clause a null `airline_id` would let the same airport month be inserted twice — which is exactly how `BENGALURU (BIAL)` and Frankfurt were double-counted before it was added. A republished month overwrites rather than appends, so a correction fully supersedes the original.
 - **Validation.** Great Expectations-style assertions gate the load: non-negative tonnage, referential integrity, and period-over-period change within a plausible band.
 
 ### 3. Transformation & feature engineering
@@ -414,7 +442,7 @@ Engineered for the forecast and anomaly models:
 | Task | Baseline | Candidate | Selection |
 |---|---|---|---|
 | Forecast | Seasonal naive | SARIMA, Prophet, XGBoost on lag features | Lowest MAPE under rolling-origin backtest |
-| Anomaly | Fixed ±2σ threshold | STL residual z-score + Isolation Forest ensemble | Highest precision at fixed recall on a labelled review set |
+| Anomaly | Fixed ±2σ threshold | STL residual z-score, robust (median/MAD) z-score, and the consensus of the two | Mean and standard deviation are themselves moved by the outlier being looked for; median and MAD are not. Guards on baseline size, non-zero fraction and median-to-max ratio stop a launch curve reading as growth |
 
 Splitting is strictly **time-based** — a random split would leak future information into training and produce forecast scores that cannot survive contact with production. Hyperparameters are tuned with Optuna over the backtest objective, and runs are tracked in MLflow.
 
@@ -423,6 +451,30 @@ Splitting is strictly **time-based** — a random split would leak future inform
 - **Forecast:** MAPE and sMAPE as headline metrics, RMSE for scale sensitivity, and prediction-interval coverage to confirm the intervals mean what they claim.
 - **Anomaly:** precision, recall, and F1 against a hand-labelled set of known cargo events; false-positive rate is the metric that decides whether the alert feed is worth reading.
 - **Chat:** exact-match accuracy on a fixed question bank with known answers, plus **citation validity** — the share of numeric claims that resolve to a real source row. This is the gate that keeps the assistant honest.
+
+---
+
+## Why there is no commodity breakdown
+
+The obvious question of an air-cargo product is *which goods are driving
+growth*. It is not answerable from India's open data, and the reason is
+worth stating precisely rather than asserting that the data "does not
+exist".
+
+Commodity-wise trade **is** published — `Principal Commodity wise Export`
+and its import counterpart, under Commerce rather than Aviation. Its
+columns are `commodity, country, unit, quantity_, value_us_million_`.
+There is no transport mode. Sea carries the large majority of India's trade
+by weight, so those figures inside an air-cargo product would imply an air
+attribution the source cannot support — a number that looks like an answer
+and is not. Commodity-wise cargo traffic is published for **sea ports**,
+not for airports.
+
+What the data does support is asked instead, in two forms: **attribution**
+answers *where* the growth came from, and **decomposition** answers *how* —
+more flights, or fuller ones. Both are exact rather than indicative: the
+contributions sum to the national change, and the two effects sum to the
+airport's change.
 
 ---
 
@@ -648,7 +700,7 @@ Air-Cargo-Intelligence/
 │       └── orchestrator.py   # Pipeline + CLI
 ├── db/migrations/            # Alembic revisions
 ├── tests/
-│   ├── unit/                 # 143 tests
+│   ├── unit/                 # 288 tests
 │   └── fixtures/             # Golden AAI PDF — the layout-change tripwire
 ├── pyproject.toml
 └── README.md
@@ -801,10 +853,75 @@ That last check has already caught real bugs in itself - a `Decimal`
 that no `isinstance(x, float)` would match, and the period label
 `2026-07` being read as the figure -7.
 
+## API Reference
+
+26 endpoints, all read-only except the chat query. The full OpenAPI document
+is served at [`/openapi.json`](https://air-cargo-intelligence.vercel.app/openapi.json)
+and browsable at [`/docs`](https://air-cargo-intelligence.vercel.app/docs).
+
+### Cargo
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/health` | Row counts and database reachability |
+| `GET /api/v1/semantic` | The registered metrics and views a query may name |
+| `GET /api/v1/airports/rankings` | League table by tonnage or growth, scoped to one period |
+| `GET /api/v1/airports/trend?iata=DEL` | Monthly series for one airport |
+| `GET /api/v1/airlines/share` | Freight per carrier, industry aggregates excluded by default |
+| `GET /api/v1/sources` | Publishers, documents retrieved and facts extracted |
+
+### Operations
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/operations/attribution` | Per-airport contributions to national growth, in points |
+| `GET /api/v1/operations/growth-decomposition?iata=DEL` | A year's change split into more flights vs fuller flights |
+| `GET /api/v1/operations/airport-efficiency` | Tonnes per flight and kg per passenger, by airport |
+| `GET /api/v1/operations/efficiency` | Cargo load factor and mail share, by carrier |
+| `GET /api/v1/operations/belly-dependency` | Freighter or belly hold, with the correlation behind it |
+| `GET /api/v1/operations/concentration` | HHI over recent months, with the effective airport count |
+| `GET /api/v1/operations/metrics` | Which operating quantities are held, and how much of each |
+
+### Intelligence
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/forecasts` | Projections with an 80% interval and backtest MAPE |
+| `GET /api/v1/anomalies` | Flagged months with observed, expected and method |
+| `GET /api/v1/insights` | Written explanations, every figure checked against a stored row |
+| `GET /api/v1/reports/brief` | The monthly brief as a standalone document |
+| `POST /api/v1/chat/query` | A grounded answer with citations and retrieved passages |
+
+### Provenance and the agent layer
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/agents/runs` · `/runs/{id}` | Recorded runs, and one full decision trace |
+| `GET /api/v1/agents/traces` · `/stats` | Pipeline invocations, and aggregate agent behaviour |
+| `GET /api/v1/agents/stream?run_id=` | Server-sent replay of a trace, step by step |
+| `GET /api/v1/search?q=` · `/search/stats` | Hybrid passage search, and what the index holds |
+| `GET /api/v1/pipeline/state` | Last scheduled run, stage by stage |
+| `GET /metrics` | Prometheus exposition |
+
+```bash
+# Which airports drove the national change, and by how much
+curl -s "https://air-cargo-intelligence.vercel.app/api/v1/operations/attribution" | jq '.contributors[:3]'
+
+# Was an airport's growth more flights, or fuller ones?
+curl -s "https://air-cargo-intelligence.vercel.app/api/v1/operations/growth-decomposition?iata=MAA" | jq
+
+# A grounded answer, with the documents behind it
+curl -s -X POST "https://air-cargo-intelligence.vercel.app/api/v1/chat/query" \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Which airlines carry the most cargo?"}' | jq '{answer, grounded, citations}'
+```
+
+---
+
 ## Testing
 
 ```bash
-pytest -q                 # 53 tests
+pytest -q                 # 288 tests
 ruff check services tests
 ```
 
