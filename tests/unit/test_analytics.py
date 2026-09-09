@@ -407,12 +407,18 @@ class TestStructuralTransitions:
         assert out[0].period == "2026-04"
 
     def test_a_service_stopping_is_detected(self):
+        """The alert names the last month with traffic, not the first without.
+
+        The original fixture put the stop on a zero month, which is the
+        ambiguous case: both that month and the one before it satisfied the
+        old rule, so a shutdown was reported twice.
+        """
         from services.analytics.anomaly import detect_structural
 
-        vals = [800.0, 850.0, 820.0, 0.0, 0.0, 0.0, 0.0]
+        vals = [800.0, 850.0, 820.0, 840.0, 0.0, 0.0, 0.0]
         per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
         out = detect_structural(per, vals)
-        assert [a.method for a in out] == ["service_stopped"]
+        assert [(a.period, a.method) for a in out] == [("2026-04", "service_stopped")]
 
     def test_no_deviation_percentage_is_invented(self):
         """A change from zero has no ratio, and printing one was the defect.
@@ -530,7 +536,8 @@ class TestLabelAndDetectorAgree:
                     continue
                 if all(x == 0 for x in before) and all(x > 0 for x in after) and v[i] > 0:
                     expected.add((per[i], "service_started"))
-                elif all(x > 0 for x in before) and all(x == 0 for x in after):
+                elif (all(x > 0 for x in before) and all(x == 0 for x in after)
+                      and v[i] > 0):
                     expected.add((per[i], "service_stopped"))
 
             found = {(a.period, a.method) for a in detect_structural(per, v)}
@@ -572,3 +579,28 @@ class TestAcceptanceReporting:
         measurable = [m for m in rows if m.passes is not None]
         met = [m for m in measurable if m.passes]
         assert len(met) < len(measurable), "everything still reported as met"
+
+
+class TestOneEventOneAlert:
+    """A shutdown is one event, and was being reported as two."""
+
+    def test_a_shutdown_raises_a_single_alert(self):
+        """Without values[i] > 0, both the last trading month and the first
+        silent month satisfied 'stopped', so a wind-down produced adjacent
+        duplicates and the second described a month of no activity.
+        """
+        from services.analytics.anomaly import detect_structural
+
+        vals = [800.0, 850.0, 820.0, 460.0, 0.0, 0.0, 0.0, 0.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert [(a.period, a.method) for a in out] == [("2026-04", "service_stopped")]
+
+    def test_the_alert_names_the_last_month_with_traffic(self):
+        from services.analytics.anomaly import detect_structural
+
+        vals = [800.0, 850.0, 820.0, 460.0, 0.0, 0.0, 0.0, 0.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        (a,) = detect_structural(per, vals)
+        assert a.observed_kg == 460.0
+        assert a.expected_kg > 0, "the level it had been running at"

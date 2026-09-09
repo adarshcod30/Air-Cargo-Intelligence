@@ -102,7 +102,8 @@ def seed(session: Session, replace: bool = False) -> dict:
                 continue
 
             started = all(x == 0 for x in before) and all(x > 0 for x in after) and v[i] > 0
-            stopped = all(x > 0 for x in before) and all(x == 0 for x in after)
+            stopped = (all(x > 0 for x in before) and all(x == 0 for x in after)
+                       and v[i] > 0)
             if started or stopped:
                 rows.append({
                     "grain": sr.grain, "entity_key": sr.entity_key[:64],
@@ -111,8 +112,8 @@ def seed(session: Session, replace: bool = False) -> dict:
                     "basis": ("service started: three zero months then three "
                               "reporting traffic")
                     if started else
-                    ("service stopped: three months reporting traffic then "
-                     "three at zero"),
+                    ("service stopped: the last month reporting traffic, "
+                     "preceded by three more and followed by three at zero"),
                     "source": "rule",
                 })
             elif (sr.entity_key, per) in broken:
@@ -148,7 +149,11 @@ def seed(session: Session, replace: bool = False) -> dict:
     by_label: dict[str, int] = {}
     for r in rows:
         by_label[r["label"]] = by_label.get(r["label"], 0) + 1
-    summary = {"labels_written": written, "by_label": by_label,
+    # Candidates, not stored rows: two series can map to one entity key, so
+    # 35 candidates collapsed to 31 rows on the natural key. Naming the
+    # counts differently keeps a reader from reading the gap as loss.
+    summary = {"labels_written": written, "candidates_by_label": by_label,
+               "candidates_generated": len(rows),
                "human_labels_preserved": len(existing_human)}
     log.info(f"anomaly labels: {summary}")
     return summary

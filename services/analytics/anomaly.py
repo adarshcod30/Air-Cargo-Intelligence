@@ -215,7 +215,13 @@ def detect_structural(
         if len(before) < window or len(after) < window:
             continue
         started = all(v == 0 for v in before) and all(v > 0 for v in after) and values[i] > 0
-        stopped = all(v > 0 for v in before) and all(v == 0 for v in after)
+        # Symmetric with started, which names the first month carrying
+        # traffic. Without values[i] > 0, a shutdown fired twice - once on
+        # the last month with traffic and again on the first month without
+        # it - and the second alert described a month in which nothing
+        # happened, reporting one event as two.
+        stopped = (all(v > 0 for v in before) and all(v == 0 for v in after)
+                   and values[i] > 0)
         if not (started or stopped):
             continue
         level = float(np.median(after if started else before))

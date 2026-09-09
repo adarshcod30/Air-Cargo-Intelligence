@@ -81,11 +81,37 @@ const plainDelta = (pct) => {
   return `${dir} ${Math.abs(p).toFixed(1)}% on the same month last year`;
 };
 
+const METHOD_LABEL = {
+  stl_residual: 'seasonal residual',
+  robust_z: 'robust z-score',
+  consensus: 'both methods agree',
+  service_started: 'service started',
+  service_stopped: 'service stopped',
+};
+const methodLabel = (m) => METHOD_LABEL[m] || String(m || '').replace(/_/g, ' ');
+
 const plainAnomaly = (r) => {
   const obs = Number(r.observed_mt), exp = Number(r.expected_mt);
-  const dev = Number(r.deviation_pct);
-  const dir = dev >= 0 ? 'far more' : 'far less';
-  return `Handled ${n1(obs)} MT in ${prettyPeriod(r.period)} — ${dir} than the `
+  const when = prettyPeriod(r.period);
+
+  // A service starting or stopping carries no deviation percentage, because
+  // there is no ratio to a baseline of zero. Number(null) is 0, which read
+  // as "far more than the 0.0 MT its seasonal pattern implied" - and for a
+  // service stopping, as more than nothing when it handled nothing.
+  if (r.method === 'service_started') {
+    return `Began handling cargo in ${when}, reaching ${n1(obs)} MT after `
+         + `three months at zero.`;
+  }
+  if (r.method === 'service_stopped') {
+    return `Stopped handling cargo after ${when}, having been running at `
+         + `about ${n1(exp)} MT a month.`;
+  }
+  if (r.deviation_pct === null || r.deviation_pct === undefined) {
+    return `Departed from its usual pattern in ${when}, handling ${n1(obs)} MT.`;
+  }
+
+  const dir = Number(r.deviation_pct) >= 0 ? 'far more' : 'far less';
+  return `Handled ${n1(obs)} MT in ${when} — ${dir} than the `
        + `${n1(exp)} MT its seasonal pattern implied.`;
 };
 
@@ -441,7 +467,7 @@ async function drawAirport(iata) {
           <div class="alert-body">
             <div class="alert-top"><span class="alert-name">${esc(prettyPeriod(r.period))}</span>
               <span class="pill ${String(r.severity).toLowerCase() === 'high' ? 'bad' : 'warn'}">${esc(r.severity)}</span>
-              <span class="pill">${esc(r.method)}</span></div>
+              <span class="pill">${esc(methodLabel(r.method))}</span></div>
             <div class="alert-plain">${esc(plainAnomaly(r))}</div>
           </div></div>`).join('')
       : '<div class="empty">Nothing flagged for this airport.</div>';
@@ -691,7 +717,7 @@ async function loadAlerts() {
             <span class="alert-name">${esc(r.entity_name || r.entity_key)}</span>
             <span class="code">${esc(r.entity_key)}</span>
             <span class="pill ${cls === 'high' ? 'bad' : 'warn'}">${esc(r.severity)}</span>
-            <span class="pill">${esc(r.method)}</span>
+            <span class="pill">${esc(methodLabel(r.method))}</span>
           </div>
           <div class="alert-plain">${esc(plainAnomaly(r))}</div>
           <div class="alert-detail">observed ${n1(r.observed_mt)} · expected ${n1(r.expected_mt)} · ${esc(String(r.direction).toLowerCase())}</div>

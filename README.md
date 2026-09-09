@@ -551,7 +551,7 @@ match the check instead.
 | Forecast | 80% interval coverage<br><sub>pooled over rolling-origin folds, counting how often the published band contained the actual — not averaged per series, which would weight a 3-fold series like a 30-fold one</sub> | 75–85% | **82.4% (413/501)** | **met** |
 | Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
-| Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 20 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.33</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
+| Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 14 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.38</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
 | Anomaly | Precision at 80% recall<br><sub>the set holds no labelled *spurious* alert, so a precision over it is not evidence. The rule that would supply them checked 1,526 complete component triples and found the worst mismatch at 0.54% — rounding, not a defect. A false positive needs a person to assert an alert was spurious; no rule can</sub> | ≥ 0.70 | awaiting review | not measurable |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
@@ -560,8 +560,8 @@ match the check instead.
 **Current dataset:** 12,238 cargo facts and 28,108 operating metrics
 covering **158 airports**, **19 airlines** and **79 reporting
 periods**, drawn from 219 source documents across three publishers. Analytics
-over it produced 11,780 trend rows, 118 alerts, 499 forecasts and
-56 written explanations, against 41 ground-truth labels covering 27
+over it produced 11,780 trend rows, 117 alerts, 499 forecasts and
+56 written explanations, against 31 ground-truth labels covering 21
 distinct events.
 
 ### How the forecast error came down
@@ -618,7 +618,15 @@ Seeding this set is what exposed the real defect: **the detector found 0 of
 series' own past, and a service that has just begun has none — so the one
 class of event an operations team most wants named was structurally
 invisible. A `service_started` / `service_stopped` detector now covers it,
-and these events outrank ordinary fluctuations in the feed.
+and these events outrank ordinary fluctuations in the feed — including in
+the API's ordering, which sorted on `abs(deviation_pct)` and so sent the
+one class with no deviation percentage to the bottom of the list.
+
+The two transitions are defined symmetrically: each names the month at the
+boundary that **carries traffic** — the first for a start, the last for a
+stop. Without that, a shutdown fired twice, once on the last trading month
+and again on the first silent one, and the second alert described a month
+in which nothing happened.
 
 The rule and the detector are deliberately **separate implementations** of
 one definition. Sharing code would make recall tautological — the detector

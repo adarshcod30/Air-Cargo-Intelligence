@@ -228,7 +228,13 @@ def anomalies(
         FROM v_anomaly
         WHERE (CAST(:severity AS text) IS NULL OR severity = CAST(:severity AS text))
           AND (CAST(:grain AS text) IS NULL OR grain = CAST(:grain AS text))
-        ORDER BY abs(deviation_pct) DESC NULLS LAST
+        -- Structural events have no deviation ratio - a change from zero
+        -- has no percentage - so ordering on it alone sent the class the
+        -- agent deliberately ranks highest to the bottom of the list, and
+        -- past the limit entirely. The read path has to preserve the
+        -- ordering the write path chose.
+        ORDER BY (method IN ('service_started', 'service_stopped')) DESC,
+                 abs(deviation_pct) DESC NULLS LAST
         LIMIT :limit
     """), {"severity": severity, "grain": grain, "limit": limit}).mappings().all()
     return {"rows": [dict(r) for r in rows], "row_count": len(rows)}
