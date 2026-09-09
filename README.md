@@ -552,7 +552,7 @@ match the check instead.
 | Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 20 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.33</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
-| Anomaly | Precision at 80% recall<br><sub>a false positive needs a label asserting an alert is spurious, and no rule can assert that — only a person reviewing the month. The queue and CLI exist; 0 human labels so far</sub> | ≥ 0.70 | awaiting review | not measurable |
+| Anomaly | Precision at 80% recall<br><sub>the set holds no labelled *spurious* alert, so a precision over it is not evidence. The rule that would supply them checked 1,526 complete component triples and found the worst mismatch at 0.54% — rounding, not a defect. A false positive needs a person to assert an alert was spurious; no rule can</sub> | ≥ 0.70 | awaiting review | not measurable |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
@@ -604,6 +604,14 @@ nobody would argue about:
 - **A row whose published components do not sum.** Where INTERNATIONAL +
   DOMESTIC differs from TOTAL by over 5%, the defect is in the source or
   the parse, so any movement it produces is not a cargo event.
+
+**This second class turned out to be empty, and that is a result rather
+than a silence.** Across 1,526 complete INTERNATIONAL/DOMESTIC/TOTAL
+triples the worst mismatch is **0.54%** — 1.0 MT at a small airport, which
+is rounding in the published source. `--report` prints the search
+alongside the empty count so a reader can tell the rule ran. The
+consequence is that no rule can supply a false positive here, and a better
+rule would not change that.
 
 Seeding this set is what exposed the real defect: **the detector found 0 of
 41 unarguable transitions.** Both z-score detectors measure distance from a

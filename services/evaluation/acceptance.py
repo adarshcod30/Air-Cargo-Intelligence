@@ -278,10 +278,7 @@ def _precision_measurements(session: Session) -> list[Measurement]:
         out.append(Measurement(
             "Anomaly", "Precision at 80% recall", "≥ 0.70",
             f"awaiting review ({human} human labels)", None,
-            f"{r['false_positives']} false positives among {r['labelled_events']} labelled "
-            f"events, but the set contains no labelled spurious alert, so the "
-            f"figure is not evidence. Review the queue: "
-            f"python -m services.evaluation.anomaly_labels --pending 20"))
+            _no_spurious_note(r)))
     else:
         p = r.get("precision")
         out.append(Measurement(
@@ -291,6 +288,28 @@ def _precision_measurements(session: Session) -> list[Measurement]:
             f"over {r['labelled_events']} labelled events, {human} of them human-judged"))
     return out
 
+
+def _no_spurious_note(r: dict) -> str:
+    """Why the set holds no spurious label, with the evidence for it.
+
+    "No labelled spurious alert" reads as an omission. It is a result: the
+    rule that would supply them checked every complete component triple and
+    found the worst mismatch to be rounding. Stating the search makes the
+    gap a finding rather than an excuse, and makes clear that a better rule
+    would not close it.
+    """
+    sr = r.get("spurious_rule") or {}
+    checked = sr.get("triples_checked", 0)
+    worst = sr.get("worst_component_mismatch_pct", 0.0)
+    return (
+        f"the set holds no labelled spurious alert, so a precision of "
+        f"{r.get('precision')} over it is not evidence. The rule that would "
+        f"supply them - a row whose published components do not sum - checked "
+        f"{checked:,} complete INTERNATIONAL/DOMESTIC/TOTAL triples and found "
+        f"the worst mismatch at {worst:.2f}%, which is rounding in the source, "
+        f"not a defect. A false positive needs a person to assert an alert was "
+        f"spurious; no rule can. Review the queue: "
+        f"python -m services.evaluation.anomaly_labels --pending 20")
 
 # ------------------------------------------------------------------ chat --
 

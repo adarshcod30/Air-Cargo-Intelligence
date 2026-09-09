@@ -247,6 +247,25 @@ def evaluate(session: Session) -> dict:
     label_rows = session.execute(
         text("SELECT count(*) FROM anomaly_label")).scalar() or 0
 
+    # An empty class is a finding, not a silence. Reporting "spurious: 0"
+    # alone leaves the reader unable to tell whether the rule found nothing
+    # or never ran, so the worst mismatch it actually saw is reported with
+    # it. At 0.5% of a 1 MT month, these are rounding in the published
+    # source rather than parse defects - which is why precision has no
+    # denominator and needs a person, not a better rule.
+    worst = session.execute(text("""
+        WITH d AS (
+          SELECT SUM(f.tonnage_kg) FILTER (WHERE f.direction='INTERNATIONAL') i,
+                 SUM(f.tonnage_kg) FILTER (WHERE f.direction='DOMESTIC') d,
+                 SUM(f.tonnage_kg) FILTER (WHERE f.direction='TOTAL') t
+          FROM fact_cargo_movement f
+          WHERE f.grain = 'AIRPORT'
+          GROUP BY f.airport_id, f.period_id)
+        SELECT count(*), COALESCE(MAX(abs((i + d) - t) / t), 0)
+        FROM d WHERE i IS NOT NULL AND d IS NOT NULL AND t > 0
+    """)).one()
+    checked, worst_pct = int(worst[0] or 0), float(worst[1] or 0) * 100
+
     return {
         # Rows and events are different populations: a service starting is
         # labelled in DOMESTIC and TOTAL alike but is one event, and the
@@ -266,6 +285,15 @@ def evaluate(session: Session) -> dict:
         "material_true_positives": m_tp,
         "material_events": m_tp + m_fn,
         "suppressed_below_bar": (tp + fn) - (m_tp + m_fn),
+        "spurious_rule": {
+            "triples_checked": checked,
+            "worst_component_mismatch_pct": round(worst_pct, 3),
+            "threshold_pct": 5.0,
+            "verdict": ("no row misses the component identity by enough to "
+                        "call its movement a defect; the worst is rounding "
+                        "in the published source")
+            if worst_pct < 5.0 else "defective rows found and labelled",
+        },
     }
 
 
