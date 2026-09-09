@@ -18,6 +18,7 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from services.analytics.forecast import MAX_PUBLISHABLE_MAPE
 from services.common.config import SETTINGS
 from services.common.logging import get_logger
 
@@ -109,7 +110,56 @@ def measure_forecast(session: Session) -> list[Measurement]:
 
     mapes = [float(r[1]) for r in rows]
     median = float(np.median(mapes))
-    beat = sum(1 for r in rows if r[0] == "sarima")
+
+    # Coverage: how many series long enough to forecast actually received
+    # one. Without this, the error figure could be improved indefinitely by
+    # publishing less.
+    # Eligible means "could reasonably be forecast": the agent's own series
+    # definition, at least eight periods, and still carrying traffic.
+    #
+    # The last condition matters. 184 series - Jetlite, Trujet, National
+    # Carriers and others - have three consecutive zero months because the
+    # carrier stopped operating. Percentage error is undefined against a
+    # zero actual, so no model can be scored on them, and none should be:
+    # projecting a defunct airline is not a capability worth having.
+    # Counting them as coverage failures measured the wrong thing.
+    eligible = session.execute(text("""
+        WITH points AS (
+            SELECT f.grain::text AS grain,
+                   COALESCE(ap.iata_code, ap.airport_name, al.airline_name) AS entity_key,
+                   f.direction::text AS direction,
+                   f.measure,
+                   p.sort_key,
+                   SUM(f.tonnage_kg) AS kg
+            FROM fact_cargo_movement f
+            JOIN dim_period p ON p.period_id = f.period_id
+            LEFT JOIN dim_airport ap ON ap.airport_id = f.airport_id
+            LEFT JOIN dim_airline al ON al.airline_id = f.airline_id
+            -- Industry aggregates are excluded from the analytics run, so
+            -- counting them as eligible would understate coverage against
+            -- series that were never attempted.
+            WHERE al.airline_id IS NULL OR al.is_aggregate = FALSE
+            GROUP BY 1, 2, 3, 4, 5
+        ),
+        ranked AS (
+            SELECT *, row_number() OVER (
+                       PARTITION BY grain, entity_key, direction, measure
+                       ORDER BY sort_key DESC) AS rn
+            FROM points
+        )
+        SELECT count(*) FROM (
+            SELECT grain, entity_key, direction, measure
+            FROM ranked
+            GROUP BY 1, 2, 3, 4
+            HAVING count(*) >= 8
+               -- Recent relative to this series' own observations, not to
+               -- the calendar. Ranking against the newest months globally
+               -- dropped every annual series from the denominator while
+               -- they still received forecasts, giving a coverage of 101%.
+               AND SUM(kg) FILTER (WHERE rn <= 3) > 0
+        ) x
+    """)).scalar() or 0
+    coverage_pct = (100.0 * len(rows) / eligible) if eligible else 0.0
 
     # Interval coverage: how often the actual falls inside the published
     # 80% band, measured against periods the warehouse already holds.
@@ -131,7 +181,19 @@ def measure_forecast(session: Session) -> list[Measurement]:
     return [
         Measurement("Forecast", "Median backtest MAPE (1 step)", "≤ 12%",
                     f"{median:.1f}%", median <= 12,
-                    f"{beat} of {len(rows)} series where SARIMA beat the baseline"),
+                    f"across {len(rows)} published series; models chosen per series "
+                    f"by rolling-origin backtest"),
+        # Reported beside the error, because a median over published
+        # forecasts alone is a half-truth: refusing the hardest series
+        # improves it without any model improving. Both numbers together
+        # say what the forecasting actually achieves.
+        Measurement("Forecast", "Series with a publishable forecast", "≥ 70%",
+                    f"{coverage_pct:.0f}% ({len(rows)}/{eligible})"
+                    if eligible else "no eligible series",
+                    (coverage_pct >= 70) if eligible else None,
+                    f"of series still carrying traffic; one whose best model "
+                    f"errs by more than {MAX_PUBLISHABLE_MAPE:.0f}% is left "
+                    f"without a forecast rather than given a misleading one"),
         # Coverage needs enough overlapping periods to mean anything.
         # Reporting 100% from a single sample would look like a pass and
         # be worth nothing.

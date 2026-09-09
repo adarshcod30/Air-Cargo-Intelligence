@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from services.agents.base import Agent, Decision
-from services.agents.policy import default_policy
+from services.agents.policy import HeuristicPolicy
 from services.common.bedrock import BedrockUnavailable, get_client
 from services.common.config import SETTINGS
 from services.common.logging import get_logger
@@ -44,7 +44,17 @@ class InsightAgent(Agent):
     name = "insight"
 
     def __init__(self, engine=None, limit: int = DEFAULT_LIMIT) -> None:
-        super().__init__(policy=default_policy(self._plan))
+        # Deterministic on purpose. This pipeline has a fixed dependency
+        # chain (load, gather, narrate, store), so there is
+        # no shape for a model to discover and nothing for it to decide.
+        # Letting it choose cost a run: it went from detect_anomalies
+        # straight to persist, skipping the forecast step, and stored zero
+        # forecasts without failing. The plan cannot do that - it refuses to
+        # persist until every prior step is done.
+        #
+        # Discovery and extraction keep the model policy, where document
+        # shapes genuinely vary and adapting is the point.
+        super().__init__(policy=HeuristicPolicy(self._plan))
         self.engine = engine or get_engine()
         self.limit = limit
         self._register_tools()

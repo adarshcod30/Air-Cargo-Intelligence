@@ -205,3 +205,32 @@ def detect(periods: list[str], values: list[float], threshold: float = 3.0) -> l
         else:
             merged.append(stat.get(p) or seas[p])
     return merged
+
+
+# How much movement is worth a person's attention.
+#
+# 310 of 419 alerts sat on movements between 100 and 1,000 tonnes, at
+# airports where Delhi alone handles 105,642. Those flags are statistically
+# real and operationally noise: a 400% swing on 60 tonnes is a rounding
+# artefact at national scale, and a feed full of them buries the movements
+# that matter. The bar is absolute rather than relative because the question
+# is whether a human should look, and that depends on tonnes, not sigma.
+MATERIAL_MIN_MT = 500.0
+MATERIAL_MIN_DEVIATION_PCT = 25.0
+
+
+def is_material(point: AnomalyPoint) -> bool:
+    """Is this movement large enough, in absolute terms, to act on?
+
+    Applied after detection rather than inside it: the statistics stay
+    honest about what is unusual, and this decides what is worth reporting.
+    Keeping the two separate means the threshold can be argued about
+    without touching the detector.
+    """
+    observed_mt = (point.observed_kg or 0.0) / 1000.0
+    expected_mt = (point.expected_kg or 0.0) / 1000.0
+    if max(observed_mt, expected_mt) < MATERIAL_MIN_MT:
+        return False
+    if abs(point.deviation_pct or 0.0) < MATERIAL_MIN_DEVIATION_PCT:
+        return False
+    return True

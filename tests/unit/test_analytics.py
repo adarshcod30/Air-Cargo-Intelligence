@@ -279,10 +279,110 @@ class TestSarimaOnNonSeasonalSeries:
         scores = rolling_origin_backtest(vals, season=1)
         assert "sarima" in scores and "seasonal_naive" in scores
 
-    def test_a_trending_series_prefers_sarima(self):
-        """On a clear trend the baseline repeats the last value and loses,
-        which is the whole point of scoring them against each other."""
+    def test_a_trending_series_prefers_a_trend_aware_model(self):
+        """On a clear trend the flat baselines lose, which is the point of
+        scoring candidates against each other rather than fixing one.
+
+        This asserted SARIMA specifically, from when SARIMA was the only
+        alternative to seasonal-naive. On a constant slope `drift` is the
+        exactly correct model and scores 0% error, so demanding SARIMA
+        would mean rejecting the better answer. What matters is that a
+        model which follows the trend wins, not which one.
+        """
         vals = [100.0 + 20 * i for i in range(12)]
         per = [f"{2010 + i}-FY" for i in range(12)]
         out = forecast(per, vals, horizon=2)
-        assert out and out[0].model == "sarima"
+        assert out, "a clean linear trend must be forecastable"
+        assert out[0].model in {"sarima", "drift"}, out[0].model
+        # Whatever wins must actually follow the trend upward, not repeat
+        # the last value.
+        assert out[0].predicted_kg > vals[-1]
+        assert out[0].backtest_mape is not None and out[0].backtest_mape < 5
+
+
+class TestForecastModelSelection:
+    """Candidates are scored against each other, and bad ones are refused."""
+
+    def test_a_flat_noisy_series_prefers_the_mean(self):
+        """Chasing noise is worse than not chasing it.
+
+        Every other candidate follows the last wobble; `recent_mean` is the
+        correct answer for a series with no trend and no cycle, and could
+        not win before it existed.
+        """
+        from services.analytics.forecast import forecast
+
+        vals = [100.0, 104.0, 97.0, 102.0, 99.0, 103.0, 98.0, 101.0,
+                100.0, 103.0, 97.0, 102.0, 99.0, 101.0, 100.0, 98.0]
+        per = [f"{2020 + i}-FY" for i in range(len(vals))]
+        out = forecast(per, vals, horizon=2)
+        assert out, "a stable series must be forecastable"
+        assert out[0].model in {"recent_mean", "naive", "drift", "sarima"}
+        # Whatever wins must land near the level, not chase the last point.
+        assert 90 < out[0].predicted_kg < 110
+
+    def test_an_unforecastable_series_gets_no_forecast(self):
+        """A projection wrong by more than the quantity is not a forecast.
+
+        Publishing it with the error printed beside it is technically
+        honest and practically misleading: it occupies a row that reads as
+        a projection. Saying nothing is the more useful answer.
+        """
+        import random
+
+        from services.analytics.forecast import MAX_PUBLISHABLE_MAPE, forecast
+
+        random.seed(7)
+        # Wild multiplicative noise: no model can hold error below the bar.
+        vals = [max(1.0, random.choice([5.0, 500.0, 20.0, 900.0, 2.0]))
+                for _ in range(20)]
+        per = [f"2020-{i + 1:02d}" for i in range(len(vals))]
+        out = forecast(per, vals, horizon=1)
+        if out:
+            assert out[0].backtest_mape is not None
+            assert out[0].backtest_mape <= MAX_PUBLISHABLE_MAPE
+
+    def test_a_short_series_is_still_scored_on_simple_models(self):
+        """One model's data requirement must not gate the others.
+
+        A global minimum of season + 2 was SARIMA's requirement applied to
+        `naive`, which needs two points, so short series got no forecast at
+        all rather than a simple one.
+        """
+        from services.analytics.forecast import rolling_origin_backtest
+
+        vals = [100.0 + i for i in range(10)]
+        scores = rolling_origin_backtest(vals, season=12)
+        assert scores, "simple candidates should still be scorable at 10 points"
+        assert {"naive", "drift", "recent_mean"} & set(scores)
+        assert "sarima" not in scores, "SARIMA lacks the history here"
+
+
+class TestAlertMateriality:
+    """An alert is something a person should look at."""
+
+    def test_a_tiny_movement_is_not_material(self):
+        """A 400% swing on 60 tonnes is a rounding artefact nationally."""
+        from services.analytics.anomaly import AnomalyPoint, is_material
+
+        tiny = AnomalyPoint(period="2026-01", observed_kg=60_000.0,
+                            expected_kg=12_000.0, deviation_pct=400.0,
+                            z_score=9.0, method="robust_z", severity="HIGH")
+        assert not is_material(tiny)
+
+    def test_a_large_movement_is_material(self):
+        from services.analytics.anomaly import AnomalyPoint, is_material
+
+        big = AnomalyPoint(period="2026-01", observed_kg=12_234_000.0,
+                           expected_kg=181_800.0, deviation_pct=6628.0,
+                           z_score=40.0, method="stl_residual", severity="HIGH")
+        assert is_material(big)
+
+    def test_a_large_but_ordinary_movement_is_not_material(self):
+        """Size alone is not news; it has to have moved."""
+        from services.analytics.anomaly import AnomalyPoint, is_material
+
+        steady = AnomalyPoint(period="2026-01", observed_kg=50_000_000.0,
+                              expected_kg=49_000_000.0, deviation_pct=2.0,
+                              z_score=3.1, method="robust_z", severity="LOW")
+        assert not is_material(steady)

@@ -24,6 +24,12 @@ from services.common.logging import get_logger
 
 log = get_logger(__name__)
 
+# A forecast wrong by more than the quantity it predicts is not a forecast.
+# Series whose best candidate cannot do better than this are left without
+# one, and the pipeline reports how many were refused rather than filling
+# the table with numbers nobody should act on.
+MAX_PUBLISHABLE_MAPE = 35.0
+
 
 @dataclass
 class ForecastPoint:
@@ -65,6 +71,48 @@ def seasonal_naive(values: list[float], season: int, horizon: int) -> list[float
     if len(values) >= season:
         return [values[-season + (i % season)] for i in range(horizon)]
     return [values[-1]] * horizon
+
+
+def naive(values: list[float], season: int, horizon: int) -> list[float]:
+    """Repeat the last observation.
+
+    On a series with no usable seasonal cycle this beats seasonal-naive
+    outright, and most of the annual and fiscal series here are exactly
+    that. Offering only seasonal-naive as the baseline meant a short,
+    aseasonal series was scored against a model guaranteed to do badly on
+    it, and then published anyway.
+    """
+    return [values[-1]] * horizon
+
+
+def drift(values: list[float], season: int, horizon: int) -> list[float]:
+    """Last value continued along the average slope of the whole series."""
+    n = len(values)
+    if n < 2:
+        return [values[-1]] * horizon
+    slope = (values[-1] - values[0]) / (n - 1)
+    return [values[-1] + slope * (i + 1) for i in range(horizon)]
+
+
+def recent_mean(values: list[float], season: int, horizon: int) -> list[float]:
+    """Mean of the recent window.
+
+    The right answer for a noisy series with no trend and no cycle, where
+    every other model chases noise.
+    """
+    window = values[-min(len(values), max(season, 6)):]
+    return [float(np.mean(window))] * horizon
+
+
+# Every candidate the backtest scores. Each is cheap, classical and
+# appropriate to series of 20-40 points; nothing here needs more data than
+# these publishers provide.
+_CANDIDATES = {
+    "naive": naive,
+    "drift": drift,
+    "recent_mean": recent_mean,
+    "seasonal_naive": seasonal_naive,
+}
 
 
 def _fit_sarima(values: list[float], season: int, horizon: int, *, debug: bool = False):
@@ -111,23 +159,43 @@ def rolling_origin_backtest(values: list[float], season: int, folds: int = 3) ->
     Each fold trains on everything up to a cut point and predicts the
     next step, so no fold can see its own future.
     """
-    results: dict[str, list[float]] = {"seasonal_naive": [], "sarima": []}
+    results: dict[str, list[float]] = {name: [] for name in _CANDIDATES}
+    results["sarima"] = []
     actuals: list[float] = []
     n = len(values)
-    min_train = max(season + 2, 6)
-    if n < min_train + folds:
+
+    # Each candidate is scored on the history it needs, not on the history
+    # the most demanding one needs. A single global `min_train` of
+    # season + 2 meant a monthly series required seventeen points before
+    # anything was scored - SARIMA's requirement, applied to `naive`, which
+    # needs two. Series shorter than that got no forecast at all, not
+    # because they were unforecastable but because the bar was set by a
+    # model that was not going to win on them anyway.
+    need = {"naive": 2, "drift": 3, "recent_mean": 3,
+            "seasonal_naive": season, "sarima": max(season + 2, 6)}
+    usable = {name for name, req in need.items() if n >= req + folds}
+    if not usable:
         return {}
 
     for k in range(folds, 0, -1):
         cut = n - k
         train, actual = values[:cut], values[cut]
         actuals.append(actual)
-        results["seasonal_naive"].append(seasonal_naive(train, season, 1)[0])
-        sarima = _fit_sarima(train, season, 1)
-        results["sarima"].append(sarima[0][0] if sarima else float("nan"))
+        for name, fn in _CANDIDATES.items():
+            if name not in usable:
+                continue
+            try:
+                results[name].append(fn(train, season, 1)[0])
+            except Exception:
+                results[name].append(float("nan"))
+        if "sarima" in usable:
+            sarima = _fit_sarima(train, season, 1)
+            results["sarima"].append(sarima[0][0] if sarima else float("nan"))
 
     scored = {}
     for name, preds in results.items():
+        if not preds or len(preds) != len(actuals):
+            continue
         if any(np.isnan(p) for p in preds):
             continue
         scored[name] = mape(actuals, preds)
@@ -144,15 +212,26 @@ def forecast(
         season = 1                          # annual series have no month cycle
 
     scores = rolling_origin_backtest(values, season)
-    baseline = scores.get("seasonal_naive")
-    candidate = scores.get("sarima")
+    if not scores:
+        return []
 
-    # Only prefer SARIMA when it demonstrably beats the baseline.
-    use_sarima = (
-        candidate is not None and baseline is not None and candidate < baseline
-    )
+    # The model the backtest actually favours, not a fixed preference.
+    # Previously SARIMA was tried and everything else fell to seasonal-naive,
+    # so an aseasonal series was published with the one model guaranteed to
+    # do badly on it.
+    winner = min(scores, key=lambda k: scores[k])
+    best = scores[winner]
 
-    if use_sarima:
+    if best is None or best > MAX_PUBLISHABLE_MAPE:
+        # A projection that was wrong by more than the quantity itself
+        # carries no information. Publishing it with the error printed
+        # beside it is technically honest and practically misleading: it
+        # occupies a row that reads as a forecast. Saying nothing is the
+        # more useful answer, and the count of refusals is reported.
+        log.debug(f"no publishable model (best {winner}={best}); refusing")
+        return []
+
+    if winner == "sarima":
         fitted = _fit_sarima(values, season, horizon)
         if fitted:
             mean, lo, hi = fitted
@@ -161,22 +240,35 @@ def forecast(
                     _next_label(periods[-1], i + 1), i + 1,
                     round(max(0.0, mean[i]), 3),
                     round(max(0.0, lo[i]), 3), round(max(0.0, hi[i]), 3),
-                    "sarima", candidate,
+                    "sarima", best,
                 )
                 for i in range(horizon)
             ]
+        # SARIMA won the backtest but will not refit on the full series;
+        # fall through to the best model that does.
+        scores.pop("sarima", None)
+        if not scores:
+            return []
+        winner = min(scores, key=lambda k: scores[k])
+        best = scores[winner]
+        if best > MAX_PUBLISHABLE_MAPE:
+            return []
 
-    preds = seasonal_naive(values, season, horizon)
-    # A baseline has no analytic interval, so use the spread of its own
-    # backtest errors rather than inventing a tighter one.
-    resid = float(np.std(values[-min(len(values), 12):])) or 0.0
+    preds = _CANDIDATES[winner](values, season, horizon)
+    # A simple model has no analytic interval. Its own backtest error is
+    # the honest width: a model that was typically 9% wrong should not
+    # publish a band narrower than that.
+    spread = max(
+        float(np.std(values[-min(len(values), 12):])),
+        abs(preds[0]) * (best / 100.0),
+    )
     return [
         ForecastPoint(
             _next_label(periods[-1], i + 1), i + 1,
             round(max(0.0, preds[i]), 3),
-            round(max(0.0, preds[i] - 1.28 * resid), 3),
-            round(preds[i] + 1.28 * resid, 3),
-            "seasonal_naive", baseline,
+            round(max(0.0, preds[i] - 1.28 * spread), 3),
+            round(preds[i] + 1.28 * spread, 3),
+            winner, best,
         )
         for i in range(horizon)
     ]

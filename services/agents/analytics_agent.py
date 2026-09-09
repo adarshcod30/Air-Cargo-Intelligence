@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from services.agents.base import Agent, Decision
-from services.agents.policy import default_policy
+from services.agents.policy import HeuristicPolicy
 from services.analytics import anomaly as anomaly_mod
 from services.analytics import forecast as forecast_mod
 from services.analytics.trend import compute_trend
@@ -34,7 +34,17 @@ class AnalyticsAgent(Agent):
     name = "analytics"
 
     def __init__(self, engine=None) -> None:
-        super().__init__(policy=default_policy(self._plan))
+        # Deterministic on purpose. This pipeline has a fixed dependency
+        # chain (trends feed anomalies feed forecasts feed persist), so there is
+        # no shape for a model to discover and nothing for it to decide.
+        # Letting it choose cost a run: it went from detect_anomalies
+        # straight to persist, skipping the forecast step, and stored zero
+        # forecasts without failing. The plan cannot do that - it refuses to
+        # persist until every prior step is done.
+        #
+        # Discovery and extraction keep the model policy, where document
+        # shapes genuinely vary and adapting is the point.
+        super().__init__(policy=HeuristicPolicy(self._plan))
         self.engine = engine or get_engine()
         self._register_tools()
 
@@ -65,10 +75,27 @@ class AnalyticsAgent(Agent):
 
         @self.tool("detect_anomalies", "Flag unusual movements in each series.")
         def anomalies() -> int:
-            rows = []
+            """One alert per event, not one per direction it shows up in.
+
+            Detection runs on every series, but TOTAL is INTERNATIONAL plus
+            DOMESTIC, so a domestic spike necessarily moves TOTAL as well.
+            Storing each was reporting one event up to three times: 172 of
+            240 flagged entity-periods appeared in more than one direction.
+
+            The surviving alert is the direction with the largest deviation,
+            which is the one that explains the movement. The others are not
+            evidence of anything the first does not already say.
+            """
+            candidates: dict[tuple, tuple] = {}
             for sr in self.context["series"]:
                 for a in anomaly_mod.detect(sr.periods, sr.values):
-                    rows.append((sr, a))
+                    if not anomaly_mod.is_material(a):
+                        continue
+                    key = (sr.grain, sr.entity_key, a.period)
+                    best = candidates.get(key)
+                    if best is None or abs(a.deviation_pct or 0) > abs(best[1].deviation_pct or 0):
+                        candidates[key] = (sr, a)
+            rows = list(candidates.values())
             self.context["anomaly_rows"] = rows
             return len(rows)
 
@@ -125,6 +152,18 @@ class AnalyticsAgent(Agent):
             ]
 
             with Session(self.engine) as s:
+                # Anomalies and forecasts are wholly derived: a run computes
+                # what is true now, so what it does not produce is no longer
+                # true. Upserting alone made the tables the union of every
+                # run ever made, so a month that stopped being anomalous
+                # stayed flagged forever and a forecast withdrawn for poor
+                # backtest error kept being served.
+                #
+                # Insights carry a foreign key to the anomaly they explain,
+                # and are themselves regenerated each run, so they are
+                # removed alongside the anomalies that no longer exist.
+                self._retire_superseded(s, anomalies, forecasts)
+
                 written = {
                     "trend": batched_upsert(
                         s, Trend, "trend_natural_key",
@@ -152,6 +191,60 @@ class AnalyticsAgent(Agent):
                 s.commit()
             self.context["written"] = written
             return written
+
+    @staticmethod
+    def _retire_superseded(s, anomalies: list[dict], forecasts: list[dict]) -> None:
+        """Remove derived rows this run did not produce.
+
+        Keyed on the same natural keys the upsert uses, so "not produced"
+        means exactly "would not be written now".
+        """
+        from sqlalchemy import text as _text
+
+        a_keys = [(r["grain"], r["entity_key"], r["direction"], r["period_id"], r["method"])
+                  for r in anomalies]
+        f_keys = [(r["grain"], r["entity_key"], r["direction"], r["period_label"], r["model"])
+                  for r in forecasts]
+
+        # Insights first: they reference the anomalies about to go.
+        s.execute(_text("""
+            DELETE FROM insight WHERE anomaly_id IN (
+                SELECT anomaly_id FROM anomaly
+                WHERE (grain::text, entity_key, direction::text, period_id, method)
+                      NOT IN (SELECT * FROM unnest(
+                          CAST(:g AS text[]), CAST(:e AS text[]), CAST(:d AS text[]),
+                          CAST(:p AS int[]), CAST(:m AS text[])))
+            )
+        """), {"g": [k[0] for k in a_keys], "e": [k[1] for k in a_keys],
+               "d": [k[2] for k in a_keys], "p": [k[3] for k in a_keys],
+               "m": [k[4] for k in a_keys]} if a_keys else {"g": [], "e": [], "d": [], "p": [], "m": []})
+
+        if a_keys:
+            s.execute(_text("""
+                DELETE FROM anomaly
+                WHERE (grain::text, entity_key, direction::text, period_id, method)
+                      NOT IN (SELECT * FROM unnest(
+                          CAST(:g AS text[]), CAST(:e AS text[]), CAST(:d AS text[]),
+                          CAST(:p AS int[]), CAST(:m AS text[])))
+            """), {"g": [k[0] for k in a_keys], "e": [k[1] for k in a_keys],
+                   "d": [k[2] for k in a_keys], "p": [k[3] for k in a_keys],
+                   "m": [k[4] for k in a_keys]})
+        else:
+            s.execute(_text("DELETE FROM insight"))
+            s.execute(_text("DELETE FROM anomaly"))
+
+        if f_keys:
+            s.execute(_text("""
+                DELETE FROM forecast
+                WHERE (grain::text, entity_key, direction::text, period_label, model)
+                      NOT IN (SELECT * FROM unnest(
+                          CAST(:g AS text[]), CAST(:e AS text[]), CAST(:d AS text[]),
+                          CAST(:p AS text[]), CAST(:m AS text[])))
+            """), {"g": [k[0] for k in f_keys], "e": [k[1] for k in f_keys],
+                   "d": [k[2] for k in f_keys], "p": [k[3] for k in f_keys],
+                   "m": [k[4] for k in f_keys]})
+        else:
+            s.execute(_text("DELETE FROM forecast"))
 
     # ---------------------------------------------------------- policy --
 
