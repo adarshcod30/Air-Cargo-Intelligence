@@ -144,6 +144,13 @@
         unusual. The shaded band is the range the forecast considers likely.
       </div>
 
+      <nav class="subtabs" data-for="airport">
+        <button class="subtab is-active" data-tab="trend">Trend &amp; forecast</button>
+        <button class="subtab" data-tab="drivers">What drove it</button>
+        <button class="subtab" data-tab="flags">Summary &amp; flags</button>
+      </nav>
+
+      <div class="tabpanel is-active" data-tab="trend">
       <article class="panel">
         <header class="panel-head">
           <div>
@@ -165,13 +172,17 @@
         </div>
         <footer class="panel-foot" id="airport-foot"></footer>
       </article>
+      </div>
 
+      <div class="tabpanel" data-tab="drivers">
       <article class="panel">
         <header class="panel-head"><div><h2>More flights, or fuller flights?</h2>
           <p class="panel-sub">Freight is flights multiplied by the tonnes each one carries, so a year&rsquo;s change splits exactly between the two. They need different responses: more flights needs slots and stands, fuller flights needs handling and warehousing.</p></div></header>
         <div class="panel-body" id="decomposition"><div class="loading">…</div></div>
       </article>
+      </div>
 
+      <div class="tabpanel" data-tab="flags">
       <div class="grid two">
         <article class="panel">
           <header class="panel-head"><div><h2>Reading this airport</h2>
@@ -183,6 +194,7 @@
             <p class="panel-sub">Months where observed traffic departed from the seasonal pattern.</p></div></header>
           <div class="panel-body flush" id="airport-alerts"><div class="loading">…</div></div>
         </article>
+      </div>
       </div>
     </section>
 
@@ -196,6 +208,14 @@
         what was already flying.
       </div>
 
+      <nav class="subtabs" data-for="operations">
+        <button class="subtab is-active" data-tab="growth">Growth</button>
+        <button class="subtab" data-tab="airports">Airports</button>
+        <button class="subtab" data-tab="carriers">Carriers</button>
+        <button class="subtab" data-tab="market">Market</button>
+      </nav>
+
+      <div class="tabpanel is-active" data-tab="growth">
       <article class="panel">
         <header class="panel-head">
           <div><h2>What drove the change</h2>
@@ -213,7 +233,9 @@
           the contributions add up to the national figure rather than merely ranking movers. A small
           airport doubling has a spectacular growth rate and a negligible contribution.</footer>
       </article>
+      </div>
 
+      <div class="tabpanel" data-tab="airports">
       <article class="panel">
         <header class="panel-head">
           <div><h2>Cargo intensity by airport</h2>
@@ -229,20 +251,22 @@
         <div class="panel-body flush" id="airport-efficiency"><div class="loading">loading…</div></div>
         <footer class="panel-foot">Freight, flights and passengers taken from the same publisher&rsquo;s release for the same month.</footer>
       </article>
+      </div>
 
-      <div class="grid two">
+      <div class="tabpanel" data-tab="market">
         <article class="panel">
           <header class="panel-head"><div><h2>Market concentration</h2>
             <p class="panel-sub">How evenly freight is spread across airports, month by month.</p></div></header>
           <div class="panel-body" id="concentration"><div class="loading">…</div></div>
         </article>
+      </div>
 
+      <div class="tabpanel" data-tab="carriers">
         <article class="panel">
           <header class="panel-head"><div><h2>Freighter or belly hold?</h2>
             <p class="panel-sub">Whether a carrier&rsquo;s freight moves with its passenger flying.</p></div></header>
           <div class="panel-body flush" id="belly"><div class="loading">…</div></div>
         </article>
-      </div>
 
       <article class="panel">
         <header class="panel-head">
@@ -259,6 +283,7 @@
         <div class="panel-body flush" id="efficiency"><div class="loading">loading…</div></div>
         <footer class="panel-foot" id="eff-foot"></footer>
       </article>
+      </div>
     </section>
 
     <!-- ========================================= FORECASTS ========== -->
@@ -306,6 +331,12 @@
         data problem, and both are worth a human look.
       </div>
 
+      <nav class="subtabs" data-for="alerts">
+        <button class="subtab is-active" data-tab="flagged">Flagged movements</button>
+        <button class="subtab" data-tab="written">Written explanations</button>
+      </nav>
+
+      <div class="tabpanel is-active" data-tab="flagged">
       <article class="panel">
         <header class="panel-head">
           <div><h2>Flagged movements</h2>
@@ -320,12 +351,15 @@
         </header>
         <div class="panel-body flush" id="alerts"><div class="loading">loading…</div></div>
       </article>
+      </div>
 
+      <div class="tabpanel" data-tab="written">
       <article class="panel">
         <header class="panel-head"><div><h2>Written explanations</h2>
           <p class="panel-sub">Narrated from the flagged figures. Every number is checked against a stored row before publishing; anything that does not resolve is rejected rather than shown.</p></div></header>
         <div class="panel-body flush" id="insights"><div class="loading">loading…</div></div>
       </article>
+      </div>
     </section>
 
     <!-- =============================================== ASK ========== -->
@@ -372,6 +406,13 @@
 
       <div class="console-strip" id="agent-totals"></div>
 
+      <nav class="subtabs" data-for="agents">
+        <button class="subtab is-active" data-tab="replay">Decision replay</button>
+        <button class="subtab" data-tab="runs">Recorded runs</button>
+        <button class="subtab" data-tab="tools">Tools &amp; policy</button>
+      </nav>
+
+      <div class="tabpanel is-active" data-tab="replay">
       <div class="grid replay">
         <article class="panel replay-panel">
           <header class="panel-head">
@@ -388,8 +429,11 @@
           </div>
           <footer class="panel-foot" id="replay-foot"></footer>
         </article>
+      </div>
+      </div>
 
-        <div class="stack">
+      <div class="tabpanel" data-tab="tools">
+        <div class="grid two">
           <article class="panel">
             <header class="panel-head"><div><h2>Tool usage</h2>
               <p class="panel-sub">Retries are the loop recovering.</p></div></header>
@@ -403,6 +447,7 @@
         </div>
       </div>
 
+      <div class="tabpanel" data-tab="runs">
       <article class="panel">
         <header class="panel-head">
           <div><h2>Recorded runs</h2></div>
@@ -412,6 +457,7 @@
         </header>
         <div class="panel-body flush" id="run-list"><div class="loading">loading…</div></div>
       </article>
+      </div>
     </section>
 
     <!-- ================================ SOURCES & HEALTH ========== -->
@@ -423,6 +469,13 @@
         be stored at all.
       </div>
 
+      <nav class="subtabs" data-for="sources">
+        <button class="subtab is-active" data-tab="provenance">Provenance</button>
+        <button class="subtab" data-tab="search">Search documents</button>
+        <button class="subtab" data-tab="health">System health</button>
+      </nav>
+
+      <div class="tabpanel is-active" data-tab="provenance">
       <div class="grid two">
         <article class="panel">
           <header class="panel-head"><div><h2>Publishers</h2>
@@ -435,7 +488,9 @@
           <div class="panel-body flush" id="index-stats"><div class="loading">…</div></div>
         </article>
       </div>
+      </div>
 
+      <div class="tabpanel" data-tab="search">
       <article class="panel">
         <header class="panel-head"><div><h2>Search the source documents</h2>
           <p class="panel-sub">Dense vector similarity and keyword search, fused. Returns the passage, never a computed number.</p></div></header>
@@ -447,7 +502,9 @@
           <div id="search-results"></div>
         </div>
       </article>
+      </div>
 
+      <div class="tabpanel" data-tab="health">
       <article class="panel">
         <header class="panel-head"><div><h2>System health</h2>
           <p class="panel-sub">Last pipeline run, stage by stage, and the counters exposed for monitoring.</p></div>
@@ -456,6 +513,7 @@
         </header>
         <div class="panel-body" id="health"><div class="loading">…</div></div>
       </article>
+      </div>
     </section>
 
   </main>

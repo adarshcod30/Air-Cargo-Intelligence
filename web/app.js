@@ -104,16 +104,85 @@ const VIEWS = {
 };
 
 const loaded = new Set();
+const loadedTabs = new Set();
 
-function show(view) {
-  if (!VIEWS[view]) view = 'overview';
+/* Which loader belongs to which tab.
+
+   Splitting these out is not only layout: opening Operations used to fire
+   five requests at once for panels the reader had not asked for. Each tab
+   now fetches its own data the first time it is opened, and never again. */
+const TAB_LOADERS = {
+  operations: {
+    growth: () => drawAttribution(),
+    airports: () => drawAirportEfficiency(),
+    carriers: () => { drawBelly(); drawEfficiency(); },
+    market: () => drawConcentration(),
+  },
+  alerts: {
+    flagged: () => loadAlerts(),
+    written: () => loadInsights(),
+  },
+  agents: {
+    replay: () => {},          // populated by loadRuns as part of the view
+    runs: () => {},
+    tools: () => {},
+  },
+  sources: {
+    provenance: () => loadPublishers(),
+    search: () => {},
+    health: () => loadHealth(),
+  },
+  airport: {
+    trend: () => {},           // the chart loads with the view
+    drivers: () => {},
+    flags: () => {},
+  },
+};
+
+function currentTab(view) {
+  const nav = $(`.subtabs[data-for="${view}"]`);
+  return nav ? $('.subtab.is-active', nav)?.dataset.tab : null;
+}
+
+function selectTab(view, tab, { pushHash = true } = {}) {
+  const nav = $(`.subtabs[data-for="${view}"]`);
+  if (!nav) return;
+  const section = $(`.view[data-view="${view}"]`);
+  const buttons = $$('.subtab', nav);
+  const wanted = buttons.some((b) => b.dataset.tab === tab) ? tab : buttons[0]?.dataset.tab;
+  if (!wanted) return;
+
+  buttons.forEach((b) => b.classList.toggle('is-active', b.dataset.tab === wanted));
+  $$('.tabpanel', section).forEach((pane) =>
+    pane.classList.toggle('is-active', pane.dataset.tab === wanted));
+
+  const key = `${view}/${wanted}`;
+  if (!loadedTabs.has(key)) {
+    loadedTabs.add(key);
+    try { (TAB_LOADERS[view]?.[wanted] || (() => {}))(); }
+    catch (e) { console.error('tab loader failed', key, e); }
+  }
+  if (pushHash) {
+    const target = `${view}/${wanted}`;
+    if (location.hash.slice(1) !== target) {
+      history.replaceState(null, '', `#${target}`);
+    }
+  }
+}
+
+function show(route) {
+  const [view0, tab] = String(route || '').split('/');
+  const view = VIEWS[view0] ? view0 : 'overview';
   $$('.nav-item').forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
   $$('.view').forEach((s) => s.classList.toggle('is-active', s.dataset.view === view));
   const [title, sub] = VIEWS[view];
   $('#view-title').textContent = title;
   $('#view-sub').textContent = sub;
-  if (location.hash.slice(1) !== view) location.hash = view;
   if (!loaded.has(view)) { loaded.add(view); (LOADERS[view] || (() => {}))(); }
+  // After the view loader, so a tab loader can rely on view-level state.
+  selectTab(view, tab || currentTab(view), { pushHash: false });
+  const target = $(`.subtabs[data-for="${view}"]`) ? `${view}/${currentTab(view)}` : view;
+  if (location.hash.slice(1) !== target) history.replaceState(null, '', `#${target}`);
   window.scrollTo({ top: 0 });
 }
 
@@ -358,9 +427,9 @@ async function drawAirport(iata) {
 
 /* ---------------------------------------------------------- operations */
 
-async function loadOperations() {
-  drawAttribution(); drawAirportEfficiency(); drawConcentration(); drawBelly(); drawEfficiency();
-}
+/* Each panel is fetched by its own tab loader, so nothing is requested for
+   a panel the reader has not opened. */
+async function loadOperations() {}
 
 async function drawAirportEfficiency() {
   const el = $('#airport-efficiency');
@@ -604,7 +673,6 @@ async function loadAlerts() {
         </div></div>`;
     }).join('');
   } catch { el.innerHTML = '<div class="empty">could not load alerts</div>'; }
-  loadInsights();
 }
 
 async function loadInsights() {
@@ -819,7 +887,9 @@ async function loadBrief() {
 
 /* ---------------------------------------------------- sources & health */
 
-async function loadSources() {
+async function loadSources() {}
+
+async function loadPublishers() {
   try {
     const d = await api('/api/v1/sources');
     $('#sources').innerHTML = `<div class="rows">${d.publishers.map((p) => `
@@ -839,8 +909,6 @@ async function loadSources() {
         <span class="name"><span class="name-main">${esc(s.embed_models.join(', ') || 'none')}</span></span>
         <span class="num">${int(s.vocabulary_terms)} terms</span></div></div>`;
   } catch { $('#index-stats').innerHTML = '<div class="empty">index unavailable</div>'; }
-
-  loadHealth();
 }
 
 async function loadHealth() {
@@ -921,6 +989,12 @@ function init() {
   });
   on(scrim, 'click', closeRail);
   $$('.nav-item').forEach((b) => on(b, 'click', () => { show(b.dataset.view); closeRail(); }));
+
+  $$('.subtabs').forEach((nav) => {
+    const view = nav.dataset.for;
+    $$('.subtab', nav).forEach((btn) =>
+      on(btn, 'click', () => selectTab(view, btn.dataset.tab)));
+  });
 
   on('#rank-direction', 'change', loadRankings);
   on('#rank-order', 'change', loadRankings);

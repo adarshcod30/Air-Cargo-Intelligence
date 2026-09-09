@@ -120,22 +120,37 @@ def concentration(
     Reported with the effective number of equally sized competitors, since
     an HHI on its own communicates nothing to a general reader.
     """
-    periods = session.execute(text("""
-        SELECT DISTINCT period, sort_key FROM v_cargo_fact
-        WHERE grain = 'AIRPORT' AND direction = :dir AND period ~ '^[0-9]{4}-[0-9]{2}$'
-        ORDER BY sort_key DESC LIMIT 12
+    # One query, not one per period. Looping a query over twelve months is
+    # twelve round trips to a database on another continent; the work is
+    # trivial and the latency is not.
+    rows = session.execute(text("""
+        WITH recent AS (
+            SELECT DISTINCT period, sort_key FROM v_cargo_fact
+            WHERE grain = 'AIRPORT' AND direction = :dir
+              AND period ~ '^[0-9]{4}-[0-9]{2}$'
+            ORDER BY sort_key DESC LIMIT 12
+        )
+        SELECT f.period, r.sort_key, f.airport_iata,
+               SUM(f.tonnage_kg) / 1000.0 AS mt
+        FROM v_cargo_fact f
+        JOIN recent r ON r.period = f.period
+        WHERE f.grain = 'AIRPORT' AND f.direction = :dir
+          AND f.airport_iata IS NOT NULL
+        GROUP BY f.period, r.sort_key, f.airport_iata
+        ORDER BY r.sort_key
     """), {"dir": direction}).mappings().all()
 
+    by_period: dict[str, list[float]] = {}
+    order: dict[str, int] = {}
+    for r in rows:
+        by_period.setdefault(r["period"], []).append(float(r["mt"]))
+        order[r["period"]] = int(r["sort_key"])
+
     out = []
-    for p in reversed(periods):
-        vals = session.execute(text("""
-            SELECT SUM(tonnage_kg) / 1000.0 AS mt FROM v_cargo_fact
-            WHERE grain = 'AIRPORT' AND direction = :dir AND period = :p
-              AND airport_iata IS NOT NULL
-            GROUP BY airport_iata
-        """), {"dir": direction, "p": p["period"]}).scalars().all()
-        h = herfindahl([float(v) for v in vals])
-        h["period"] = p["period"]
+    for period in sorted(by_period, key=lambda p: order[p]):
+        vals = by_period[period]
+        h = herfindahl(vals)
+        h["period"] = period
         h["airports"] = len(vals)
         out.append(h)
     return {"rows": out, "row_count": len(out), "direction": direction}
