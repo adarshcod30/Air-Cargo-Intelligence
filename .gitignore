@@ -44,3 +44,5 @@ Thumbs.db
 
 # Alembic local state
 db/migrations/__pycache__/
+.vercel
+.env*
