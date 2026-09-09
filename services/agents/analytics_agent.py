@@ -24,7 +24,7 @@ from services.analytics import forecast as forecast_mod
 from services.analytics.trend import compute_trend
 from services.common.logging import get_logger
 from services.common.models import ToolCall
-from services.warehouse.loader import get_engine
+from services.warehouse.loader import batched_upsert, get_engine
 from services.warehouse.queries import load_series, national_totals, period_ids
 from services.warehouse.schema import Anomaly, Forecast, Trend
 
@@ -89,62 +89,67 @@ class AnalyticsAgent(Agent):
         @self.tool("persist", "Write trends, anomalies and forecasts to the warehouse.")
         def persist() -> dict:
             pid = self.context["period_ids"]
-            written = {"trend": 0, "anomaly": 0, "forecast": 0}
+
+            trends = [
+                {
+                    "grain": sr.grain, "entity_key": sr.entity_key[:64],
+                    "direction": sr.direction, "period_id": pid[pt.period],
+                    "tonnage_kg": pt.tonnage_kg, "yoy_pct": pt.yoy_pct,
+                    "mom_pct": pt.mom_pct, "cagr_pct": pt.cagr_pct,
+                    "share_of_total": pt.share_of_total,
+                    "share_shift_pp": pt.share_shift_pp,
+                }
+                for sr, pt in self.context.get("trend_rows", [])
+                if pt.period in pid
+            ]
+            anomalies = [
+                {
+                    "grain": sr.grain, "entity_key": sr.entity_key[:64],
+                    "direction": sr.direction, "period_id": pid[a.period],
+                    "observed_kg": a.observed_kg, "expected_kg": a.expected_kg,
+                    "deviation_pct": a.deviation_pct, "z_score": a.z_score,
+                    "method": a.method, "severity": a.severity,
+                    "evidence_fact_ids": f"{sr.grain}:{sr.entity_key}:{a.period}",
+                }
+                for sr, a in self.context.get("anomaly_rows", [])
+                if a.period in pid
+            ]
+            forecasts = [
+                {
+                    "grain": sr.grain, "entity_key": sr.entity_key[:64],
+                    "direction": sr.direction, "period_label": f.period_label,
+                    "horizon": f.horizon, "predicted_kg": f.predicted_kg,
+                    "lower_kg": f.lower_kg, "upper_kg": f.upper_kg,
+                    "model": f.model, "backtest_mape": f.backtest_mape,
+                }
+                for sr, f in self.context.get("forecast_rows", [])
+            ]
+
             with Session(self.engine) as s:
-                for sr, pt in self.context.get("trend_rows", []):
-                    if pt.period not in pid:
-                        continue
-                    ins = insert(Trend).values(
-                        grain=sr.grain, entity_key=sr.entity_key[:64],
-                        direction=sr.direction, period_id=pid[pt.period],
-                        tonnage_kg=pt.tonnage_kg, yoy_pct=pt.yoy_pct,
-                        mom_pct=pt.mom_pct, cagr_pct=pt.cagr_pct,
-                        share_of_total=pt.share_of_total,
-                        share_shift_pp=pt.share_shift_pp,
-                    )
-                    s.execute(ins.on_conflict_do_update(
-                        constraint="trend_natural_key",
-                        set_={"tonnage_kg": ins.excluded.tonnage_kg,
-                              "yoy_pct": ins.excluded.yoy_pct,
-                              "mom_pct": ins.excluded.mom_pct,
-                              "cagr_pct": ins.excluded.cagr_pct,
-                              "share_of_total": ins.excluded.share_of_total,
-                              "share_shift_pp": ins.excluded.share_shift_pp}))
-                    written["trend"] += 1
-
-                for sr, a in self.context.get("anomaly_rows", []):
-                    if a.period not in pid:
-                        continue
-                    ins = insert(Anomaly).values(
-                        grain=sr.grain, entity_key=sr.entity_key[:64],
-                        direction=sr.direction, period_id=pid[a.period],
-                        observed_kg=a.observed_kg, expected_kg=a.expected_kg,
-                        deviation_pct=a.deviation_pct, z_score=a.z_score,
-                        method=a.method, severity=a.severity,
-                        evidence_fact_ids=f"{sr.grain}:{sr.entity_key}:{a.period}",
-                    )
-                    s.execute(ins.on_conflict_do_update(
-                        constraint="anomaly_natural_key",
-                        set_={"observed_kg": ins.excluded.observed_kg,
-                              "z_score": ins.excluded.z_score,
-                              "severity": ins.excluded.severity}))
-                    written["anomaly"] += 1
-
-                for sr, f in self.context.get("forecast_rows", []):
-                    ins = insert(Forecast).values(
-                        grain=sr.grain, entity_key=sr.entity_key[:64],
-                        direction=sr.direction, period_label=f.period_label,
-                        horizon=f.horizon, predicted_kg=f.predicted_kg,
-                        lower_kg=f.lower_kg, upper_kg=f.upper_kg,
-                        model=f.model, backtest_mape=f.backtest_mape,
-                    )
-                    s.execute(ins.on_conflict_do_update(
-                        constraint="forecast_natural_key",
-                        set_={"predicted_kg": ins.excluded.predicted_kg,
-                              "lower_kg": ins.excluded.lower_kg,
-                              "upper_kg": ins.excluded.upper_kg,
-                              "backtest_mape": ins.excluded.backtest_mape}))
-                    written["forecast"] += 1
+                written = {
+                    "trend": batched_upsert(
+                        s, Trend, "trend_natural_key",
+                        ["tonnage_kg", "yoy_pct", "mom_pct", "cagr_pct",
+                         "share_of_total", "share_shift_pp"],
+                        trends,
+                        lambda r: (r["grain"], r["entity_key"], r["direction"],
+                                   r["period_id"]),
+                    ),
+                    "anomaly": batched_upsert(
+                        s, Anomaly, "anomaly_natural_key",
+                        ["observed_kg", "z_score", "severity"],
+                        anomalies,
+                        lambda r: (r["grain"], r["entity_key"], r["direction"],
+                                   r["period_id"], r["method"]),
+                    ),
+                    "forecast": batched_upsert(
+                        s, Forecast, "forecast_natural_key",
+                        ["predicted_kg", "lower_kg", "upper_kg", "backtest_mape"],
+                        forecasts,
+                        lambda r: (r["grain"], r["entity_key"], r["direction"],
+                                   r["period_label"], r["model"]),
+                    ),
+                }
                 s.commit()
             self.context["written"] = written
             return written

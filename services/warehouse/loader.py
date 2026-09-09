@@ -37,6 +37,52 @@ log = get_logger(__name__)
 # Postgres' 65,535 bound parameters - these rows carry twelve columns.
 _BATCH = 500
 
+
+def batched_upsert(
+    session,
+    table,
+    constraint: str,
+    update_cols: list[str],
+    rows,
+    key,
+    batch: int = _BATCH,
+) -> int:
+    """Upsert rows a batch at a time, deduplicating each batch by natural key.
+
+    Row-at-a-time upserts are invisible on a unix socket and pathological
+    over a network: the server sits idle in transaction while each statement
+    crosses the wire. Every writer in this project had the same shape, so
+    the fix belongs in one place rather than three.
+
+    Deduplicating is required, not an optimisation. Postgres rejects a
+    multi-row INSERT whose ON CONFLICT would affect one row twice, and a
+    recomputed period legitimately produces a repeat. Later rows win, which
+    matches what a sequence of single-row upserts did implicitly.
+    """
+    pending: dict[tuple, dict] = {}
+    written = 0
+
+    def flush() -> None:
+        nonlocal written
+        if not pending:
+            return
+        ins = insert(table).values(list(pending.values()))
+        session.execute(
+            ins.on_conflict_do_update(
+                constraint=constraint,
+                set_={c: getattr(ins.excluded, c) for c in update_cols},
+            )
+        )
+        written += len(pending)
+        pending.clear()
+
+    for row in rows:
+        pending[key(row)] = row
+        if len(pending) >= batch:
+            flush()
+    flush()
+    return written
+
 _PERIOD_RX = re.compile(r"^(\d{4})-(\d{2}|FY|A)$")
 
 
@@ -204,29 +250,15 @@ class WarehouseLoader:
 
     @staticmethod
     def _flush(s, pending: dict) -> None:
-        """Write the staged rows as one statement, then clear the buffer.
-
-        The loader used to issue one INSERT per fact and commit at the end.
-        On a unix socket that is 12,692 sub-millisecond round trips and
-        finishes in about seven seconds; against a managed database on
-        another continent the same code spends over half an hour with the
-        server idle in transaction, because the cost was never the write.
-        """
+        """Write the staged facts as one statement, then clear the buffer."""
         if not pending:
             return
-        ins = insert(CargoFactRow).values(list(pending.values()))
-        s.execute(
-            ins.on_conflict_do_update(
-                constraint="fact_natural_key",
-                set_={
-                    "tonnage_kg": ins.excluded.tonnage_kg,
-                    "prior_year_tonnage_kg": ins.excluded.prior_year_tonnage_kg,
-                    "reported_change_pct": ins.excluded.reported_change_pct,
-                    "source_document_id": ins.excluded.source_document_id,
-                    "resolution_confidence": ins.excluded.resolution_confidence,
-                    "resolution_method": ins.excluded.resolution_method,
-                },
-            )
+        batched_upsert(
+            s, CargoFactRow, "fact_natural_key",
+            ["tonnage_kg", "prior_year_tonnage_kg", "reported_change_pct",
+             "source_document_id", "resolution_confidence", "resolution_method"],
+            list(pending.values()),
+            WarehouseLoader._natural_key,
         )
         pending.clear()
 
