@@ -91,3 +91,34 @@ class TestNoEndpointReachesPastTheViews:
                 if re.search(rf"\bFROM\s+{table}\b", src, re.I):
                     offenders.append(f"{path.name} reads {table}")
         assert not offenders, offenders
+
+
+# --------------------------------------------------------------- runtime --
+
+def test_config_imports_on_a_read_only_filesystem(tmp_path, monkeypatch):
+    """Importing configuration must not require a writable filesystem.
+
+    Every module imports services.common.config, and it created its working
+    directories at import time. On a serverless runtime the filesystem is
+    read-only outside /tmp, so the import raised PermissionError before the
+    application object existed and *every* route returned 500 - including
+    static files, which touch no code of ours at all.
+
+    The directories serve ingestion, which never runs on the serving path.
+    """
+    import importlib
+    import os
+
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    os.chmod(readonly, 0o500)  # r-x: traversable, not writable
+    monkeypatch.setenv("ACI_RAW_DIR", str(readonly / "raw"))
+    try:
+        import services.common.config as config
+
+        reloaded = importlib.reload(config)
+        assert reloaded.SETTINGS.raw_dir is not None
+    finally:
+        os.chmod(readonly, 0o700)
+        monkeypatch.delenv("ACI_RAW_DIR", raising=False)
+        importlib.reload(importlib.import_module("services.common.config"))

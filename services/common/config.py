@@ -38,8 +38,26 @@ def _flag(env: str, default: bool) -> bool:
 
 
 def _path(env: str, default: str) -> Path:
+    """Resolve a working directory, creating it when the filesystem allows.
+
+    This used to create the directory unconditionally at import time, and
+    every module imports this one. A serverless filesystem is read-only
+    outside /tmp, so the import raised PermissionError before the
+    application object existed and every route failed - including static
+    files, which is the symptom that gives it away.
+
+    These directories hold downloaded artefacts and are used only by
+    ingestion, which never runs on the serving path. Not being able to
+    create one is therefore not a reason to refuse to start; a writer that
+    genuinely needs the directory will fail loudly at the point of writing,
+    where the error can say what it was trying to do.
+    """
     p = Path(os.getenv(env, REPO_ROOT / default))
-    p.mkdir(parents=True, exist_ok=True)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # read-only filesystem, or no permission
+        log_line = f"cannot create {p} ({exc.__class__.__name__}); ingestion writes will fail"
+        print(f"WARN config {log_line}")
     return p
 
 
