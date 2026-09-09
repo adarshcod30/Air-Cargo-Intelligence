@@ -12,6 +12,7 @@ dependencies = [
     "duckdb>=1.0",
     "python-dateutil>=2.9",
     "boto3>=1.35",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

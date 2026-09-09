@@ -9,6 +9,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _load_env_file() -> None:
+    """Read .env into the environment on import, if one exists.
+
+    Without this every entry point needs the caller to export the file
+    first, which is a step that works on the machine where it was written
+    and nowhere else. Real environment variables always win: a hosted
+    deployment sets them directly and has no .env, and a stale local file
+    must never override what the platform supplies.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env_file = REPO_ROOT / ".env"
+    if env_file.is_file():
+        load_dotenv(env_file, override=False)
+
+
+_load_env_file()
+
+
 def _flag(env: str, default: bool) -> bool:
     raw = os.getenv(env)
     if raw is None:
