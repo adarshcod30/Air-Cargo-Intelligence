@@ -90,6 +90,12 @@ const METHOD_LABEL = {
 };
 const methodLabel = (m) => METHOD_LABEL[m] || String(m || '').replace(/_/g, ' ');
 
+// Series are monthly or fiscal-annual, and the window is three periods
+// either way. Saying "three months at zero" of a fiscal year understates a
+// three-year absence by a factor of twelve.
+const periodUnit = (p) => (/FY/i.test(String(p)) ? 'years' : 'months');
+const perPeriod  = (p) => (/FY/i.test(String(p)) ? 'a year' : 'a month');
+
 const plainAnomaly = (r) => {
   const obs = Number(r.observed_mt), exp = Number(r.expected_mt);
   const when = prettyPeriod(r.period);
@@ -100,11 +106,11 @@ const plainAnomaly = (r) => {
   // service stopping, as more than nothing when it handled nothing.
   if (r.method === 'service_started') {
     return `Began handling cargo in ${when}, reaching ${n1(obs)} MT after `
-         + `three months at zero.`;
+         + `three ${periodUnit(r.period)} at zero.`;
   }
   if (r.method === 'service_stopped') {
     return `Stopped handling cargo after ${when}, having been running at `
-         + `about ${n1(exp)} MT a month.`;
+         + `about ${n1(exp)} MT ${perPeriod(r.period)}.`;
   }
   if (r.deviation_pct === null || r.deviation_pct === undefined) {
     return `Departed from its usual pattern in ${when}, handling ${n1(obs)} MT.`;
