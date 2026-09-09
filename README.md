@@ -546,20 +546,42 @@ match the check instead.
 | Ingestion | Documents either extracted or refused with a reason<br><sub>154 extracted, 44 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (198/198) | **met** |
 | Ingestion | INTL + DOM = TOTAL, recomputed from stored rows | ≥ 99% | 99.3% (1,640/1,651) | **met** |
 | Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
-| Forecast | Median backtest MAPE (1 step)<br><sub>125 of 197 series where SARIMA beat the baseline</sub> | ≤ 12% | 16.4% | below target |
+| Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series — naive, drift, recent-mean, seasonal-naive, SARIMA — and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
+| Forecast | Series with a publishable forecast<br><sub>of series still carrying traffic; reported beside the error because a median over published forecasts alone can be improved by publishing less</sub> | ≥ 70% | **74% (167/226)** | **met** |
 | Forecast | 80% interval coverage<br><sub>needs at least 20 forecast periods the warehouse already holds; measurable once a forecast horizon has elapsed</sub> | 75–85% | insufficient overlap (8 sample(s)) | not measured |
-| Anomaly | Alerts per month<br><sub>counts all three directions; TOTAL largely mirrors DOMESTIC</sub> | ≤ 5 | 11.9 | below target |
-| Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | 6.8 | below target |
+| Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
+| Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Precision at 80% recall<br><sub>needs a hand-labelled set of known cargo events; not built</sub> | ≥ 0.70 | not measured | not measured |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
 
-**Current dataset:** 12,238 facts covering **148 airports** across
-**8 countries**, **19 airlines** and **79 reporting
-periods** from 2001-FY to 2026-07, drawn from three publishers. Analytics over it
-produced 11,850 trend rows, 419 anomalies, 1,187 forecasts and 0
-written explanations.
+**Current dataset:** 12,238 cargo facts and 28,108 operating metrics
+covering **158 airports**, **19 airlines** and **79 reporting
+periods**, drawn from 219 source documents across three publishers. Analytics
+over it produced 11,780 trend rows, 109 alerts, 499 forecasts and
+56 written explanations.
+
+### How the forecast error came down
+
+16.4% to 11.1% median, and worth separating into its causes rather than
+claiming it all as modelling:
+
+| Change | Median MAPE |
+|---|---|
+| Previous logic — SARIMA only if it beat seasonal-naive | 16.7% |
+| Five candidates, best chosen by backtest, all series | 14.9% |
+| Publishing only what clears a 35% error bar | **11.1%** |
+
+So 1.8 points came from better model selection and 3.8 from refusing the
+hopeless series. That second figure is why coverage is reported beside the
+error: a median over published forecasts can always be improved by
+publishing less, and the pair of numbers is the honest statement.
+
+The worst forecast previously published was wrong by **820%**. Nothing above
+34% is published now — a projection wrong by more than the quantity it
+predicts is not a forecast, and printing the error beside it does not make
+it one.
 
 Three criteria sit below target, and are reported rather than softened:
 
