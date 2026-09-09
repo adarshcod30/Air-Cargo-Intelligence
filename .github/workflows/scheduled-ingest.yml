@@ -25,10 +25,34 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
+
+      # Fail here, not four minutes later. Without this the job crawls the
+      # publishers first and only discovers it has nowhere to write when the
+      # load stage opens a connection, so the log reads as a pipeline fault
+      # rather than a missing secret.
+      - name: Check the secrets this job needs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL is not set as a repository secret."
+            echo "Set it with: gh secret set DATABASE_URL"
+            echo "Without it the crawl runs and then discards everything it fetched."
+            exit 1
+          fi
+
       - name: Run the pipeline
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATA_GOV_IN_API_KEY: ${{ secrets.DATA_GOV_IN_API_KEY }}
+          # Narration and the retrieval index run through Bedrock. Without
+          # these the run still succeeds, but the insight agent falls back
+          # to templated prose and the difference is invisible in the
+          # output, so the site would quietly get worse rather than break.
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          BEDROCK_ENABLED: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
         run: python -m services.scheduler
       - name: Publish the run state
         if: always()
