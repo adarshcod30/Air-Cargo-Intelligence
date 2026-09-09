@@ -288,6 +288,12 @@ class Forecast(Base):
     upper_kg = Column(Numeric(18, 3))
     model = Column(String(32), nullable=False)
     backtest_mape = Column(Float)
+    # How often the published band contained the truth across backtest
+    # folds. Stored as a count rather than a percentage so coverage can be
+    # pooled across series; averaging three-sample percentages weights a
+    # short series the same as a long one.
+    interval_hits = Column(Integer)
+    interval_folds = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -498,4 +504,32 @@ class OperatingMetricRow(Base):
             name="operating_metric_natural_key",
         ),
         CheckConstraint("value >= 0", name="value_non_negative"),
+    )
+
+
+class AnomalyLabelRow(Base):
+    """Ground truth for evaluating the alert feed.
+
+    Seeded only with cases that are not arguable, and extended by hand.
+    `source` says which, so a precision figure can report how much of its
+    evidence is judgement.
+    """
+
+    __tablename__ = "anomaly_label"
+
+    label_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    grain = Column(GRAIN, nullable=False)
+    entity_key = Column(String(64), nullable=False, index=True)
+    period_id = Column(Integer, ForeignKey("dim_period.period_id"), nullable=False)
+    direction = Column(DIRECTION, nullable=False)
+    label = Column(String(16), nullable=False)
+    basis = Column(Text, nullable=False)
+    source = Column(String(16), nullable=False, default="rule")
+    labelled_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("grain", "entity_key", "period_id", "direction",
+                         name="anomaly_label_natural_key"),
+        CheckConstraint("label IN ('GENUINE','SPURIOUS')", name="label_known"),
+        CheckConstraint("source IN ('rule','human')", name="source_known"),
     )

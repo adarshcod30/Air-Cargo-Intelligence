@@ -88,7 +88,10 @@ LEFT JOIN dim_airport ap ON ap.iata_code = a.entity_key
 LEFT JOIN dim_airline al ON al.airline_name = a.entity_key;
 
 
-CREATE OR REPLACE VIEW v_forecast AS
+-- Dropped rather than replaced: CREATE OR REPLACE cannot insert a column
+-- into the middle of an existing view's column list.
+DROP VIEW IF EXISTS v_forecast;
+CREATE VIEW v_forecast AS
 SELECT
     f.forecast_id,
     f.grain::text        AS grain,
@@ -101,6 +104,8 @@ SELECT
     f.upper_kg,
     f.model,
     f.backtest_mape,
+    f.interval_hits,
+    f.interval_folds,
     ap.airport_name,
     al.airline_name
 FROM forecast f

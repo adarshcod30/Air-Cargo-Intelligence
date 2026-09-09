@@ -181,8 +181,8 @@ flowchart LR
     A["1 · Ingestion<br/><small>fetch, checksum, provenance</small>"]
     B["2 · Cleaning<br/><small>codes, units, periods, dedup</small>"]
     C["3 · Trend<br/><small>YoY, CAGR, share shift</small>"]
-    D["4 · Anomaly<br/><small>STL residual + robust z</small>"]
-    E["5 · Forecast<br/><small>SARIMA / XGBoost</small>"]
+    D["4 · Anomaly<br/><small>STL + robust z + structural</small>"]
+    E["5 · Forecast<br/><small>5 candidates, backtest picks</small>"]
     F["6 · Narrative<br/><small>grounded explanation</small>"]
 
     A --> B --> C --> D --> E --> F
@@ -194,8 +194,8 @@ flowchart LR
 | **1. Ingestion** | Source registry | Raw artefacts + `source_document` rows | Scheduled fetch, SHA-256 checksum, content-type routing to the right parser |
 | **2. Cleaning & Reconciliation** | Staging tables | Conformed `fact_cargo_movement` | Code canonicalisation, unit normalisation to kilograms, fiscal-to-calendar alignment, deduplication on the natural key `(grain, period, airport, airline, direction, publisher, measure)`, declared `NULLS NOT DISTINCT` because Postgres treats NULLs as distinct by default and a null airline would otherwise let the same airport month be inserted twice |
 | **3. Trend Analysis** | Fact table | `trend` rows | YoY / MoM / CAGR, market-share shift, STL seasonal decomposition |
-| **4. Anomaly Detection** | Fact + trend | `anomaly` rows with severity | STL residual z-score, robust (median/MAD) z-score, consensus of the two, with guards against launch curves reading as growth |
-| **5. Forecast** | Fact table | `forecast` rows with intervals | SARIMA baseline, XGBoost with lag/calendar features, rolling-origin backtest |
+| **4. Anomaly Detection** | Fact + trend | `anomaly` rows with severity | STL residual z-score, robust (median/MAD) z-score, consensus of the two, a structural detector for services starting and stopping (which no z-score can see, having no history to deviate from), and guards against launch curves reading as growth |
+| **5. Forecast** | Fact table | `forecast` rows with intervals | Five candidates — naive, drift, recent-mean, seasonal-naive, SARIMA — each scored by rolling-origin backtest on the history it needs; the winner publishes only if it clears an error bar |
 | **6. Insight Narrative** | Anomaly + trend + forecast | `insight` rows with citations | LLM writes prose over supplied rows only; every claim carries a `source_document` reference |
 
 > **Note on agent 6.** It receives a structured payload of already-computed rows and is instructed to explain them. It has no database access and no arithmetic responsibility. If it cannot ground a claim in the rows it was handed, the insight is rejected rather than published.
@@ -441,15 +441,15 @@ Engineered for the forecast and anomaly models:
 
 | Task | Baseline | Candidate | Selection |
 |---|---|---|---|
-| Forecast | Seasonal naive | SARIMA, Prophet, XGBoost on lag features | Lowest MAPE under rolling-origin backtest |
-| Anomaly | Fixed ±2σ threshold | STL residual z-score, robust (median/MAD) z-score, and the consensus of the two | Mean and standard deviation are themselves moved by the outlier being looked for; median and MAD are not. Guards on baseline size, non-zero fraction and median-to-max ratio stop a launch curve reading as growth |
+| Forecast | Naive (last value) | Drift, recent-mean, seasonal-naive, SARIMA (statsmodels) | Lowest MAPE under rolling-origin backtest, scored per candidate on the history it can actually use — SARIMA needs a season plus two, naive needs two, and judging them on a common minimum silently excluded the cheap models from short series |
+| Anomaly | Fixed ±2σ threshold | STL residual z-score, robust (median/MAD) z-score, the consensus of the two, and a structural detector for zero-to-traffic transitions | Mean and standard deviation are themselves moved by the outlier being looked for; median and MAD are not. Guards on baseline size, non-zero fraction and median-to-max ratio stop a launch curve reading as growth |
 
-Splitting is strictly **time-based** — a random split would leak future information into training and produce forecast scores that cannot survive contact with production. Hyperparameters are tuned with Optuna over the backtest objective, and runs are tracked in MLflow.
+Splitting is strictly **time-based** — a random split would leak future information into training and produce forecast scores that cannot survive contact with production. There is no hyperparameter search: with 79 reporting periods and series often under 20 points, tuning would fit the backtest rather than the data, so the candidate set is small and fixed and the backtest only chooses between members of it.
 
 ### 5. Evaluation
 
 - **Forecast:** MAPE and sMAPE as headline metrics, RMSE for scale sensitivity, and prediction-interval coverage to confirm the intervals mean what they claim.
-- **Anomaly:** precision, recall, and F1 against a hand-labelled set of known cargo events; false-positive rate is the metric that decides whether the alert feed is worth reading.
+- **Anomaly:** recall against the `anomaly_label` set, reported alongside how many labels it rests on and how many came from a person. Precision is reported as *not measurable* rather than estimated, since a false positive requires a human to assert an alert was spurious — see [the labelled set](#the-labelled-set-behind-the-alert-metrics).
 - **Chat:** exact-match accuracy on a fixed question bank with known answers, plus **citation validity** — the share of numeric claims that resolve to a real source row. This is the gate that keeps the assistant honest.
 
 ---
@@ -548,10 +548,11 @@ match the check instead.
 | Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
 | Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series — naive, drift, recent-mean, seasonal-naive, SARIMA — and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
 | Forecast | Series with a publishable forecast<br><sub>of series still carrying traffic; reported beside the error because a median over published forecasts alone can be improved by publishing less</sub> | ≥ 70% | **74% (167/226)** | **met** |
-| Forecast | 80% interval coverage<br><sub>needs at least 20 forecast periods the warehouse already holds; measurable once a forecast horizon has elapsed</sub> | 75–85% | insufficient overlap (8 sample(s)) | not measured |
+| Forecast | 80% interval coverage<br><sub>pooled over rolling-origin folds, counting how often the published band contained the actual — not averaged per series, which would weight a 3-fold series like a 30-fold one</sub> | 75–85% | **82.4% (413/501)** | **met** |
 | Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
 | Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
-| Anomaly | Precision at 80% recall<br><sub>needs a hand-labelled set of known cargo events; not built</sub> | ≥ 0.70 | not measured | not measured |
+| Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 20 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.33</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
+| Anomaly | Precision at 80% recall<br><sub>a false positive needs a label asserting an alert is spurious, and no rule can assert that — only a person reviewing the month. The queue and CLI exist; 0 human labels so far</sub> | ≥ 0.70 | awaiting review | not measurable |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
@@ -559,8 +560,9 @@ match the check instead.
 **Current dataset:** 12,238 cargo facts and 28,108 operating metrics
 covering **158 airports**, **19 airlines** and **79 reporting
 periods**, drawn from 219 source documents across three publishers. Analytics
-over it produced 11,780 trend rows, 109 alerts, 499 forecasts and
-56 written explanations.
+over it produced 11,780 trend rows, 118 alerts, 499 forecasts and
+56 written explanations, against 41 ground-truth labels covering 27
+distinct events.
 
 ### How the forecast error came down
 
@@ -583,19 +585,52 @@ The worst forecast previously published was wrong by **820%**. Nothing above
 predicts is not a forecast, and printing the error beside it does not make
 it one.
 
-Three criteria sit below target, and are reported rather than softened:
+### The labelled set behind the alert metrics
 
-- **Forecast MAPE is 16.4% against a 12% target.** These series are short
-  and volatile, and SARIMA ships only where it actually beats the
-  seasonal-naive baseline. Closing the gap needs more history or features
-  the published data does not carry.
-- **Alerts average 11.9 a month against a target of 5.** That counts all
-  three directions, and TOTAL largely mirrors DOMESTIC, so a reader sees
-  about 6.8 distinct entities. Still above target: the detector needs
-  further calibration, not a looser target.
-- **Anomaly precision is unmeasured.** It needs a hand-labelled set of
-  known cargo events, which has not been built. An estimate here would be
-  worth less than the honest gap.
+Recall needs ground truth, and ground truth for "was this a real cargo
+event?" is not in the data. Two proxies were built and discarded on
+evidence:
+
+| Proxy | Why it was rejected |
+|---|---|
+| The publisher's own year-on-year change | It barely separates the populations — 33% of flagged and 27% of unflagged months exceed a 50% swing. Year-on-year movement and departure from a seasonal pattern are different questions. |
+| Persistence of the level shift | It marked 80% of unflagged months as genuine events. That is not a credible base rate; the rule was firing on ordinary variation. |
+
+What survives is narrow by design — `anomaly_label` holds only cases
+nobody would argue about:
+
+- **A service starting or stopping.** Three zero months followed by three
+  reporting months is not a statistical curiosity; something began.
+- **A row whose published components do not sum.** Where INTERNATIONAL +
+  DOMESTIC differs from TOTAL by over 5%, the defect is in the source or
+  the parse, so any movement it produces is not a cargo event.
+
+Seeding this set is what exposed the real defect: **the detector found 0 of
+41 unarguable transitions.** Both z-score detectors measure distance from a
+series' own past, and a service that has just begun has none — so the one
+class of event an operations team most wants named was structurally
+invisible. A `service_started` / `service_stopped` detector now covers it,
+and these events outrank ordinary fluctuations in the feed.
+
+The rule and the detector are deliberately **separate implementations** of
+one definition. Sharing code would make recall tautological — the detector
+scored against its own output — which is precisely why a genuine 0/41 was
+possible. A test asserts the two agree, so they cannot drift apart silently.
+
+**Precision remains unmeasurable, and is reported that way.** A false
+positive requires a label asserting that an alert is *spurious*, and no
+rule can assert that — only a person looking at the month. The review queue
+exists for whoever does:
+
+```bash
+python -m services.evaluation.anomaly_labels --seed      # rule-derived labels
+python -m services.evaluation.anomaly_labels --pending 20 # highest-impact unlabelled alerts
+python -m services.evaluation.anomaly_labels --report     # precision, recall, and what they rest on
+```
+
+Every figure it prints carries its label count and how many came from a
+human, because a precision of 1.00 over nine rule-derived labels is not
+the same claim as 1.00 over two hundred reviewed ones.
 
 ## Deployment & Infrastructure
 
@@ -983,8 +1018,9 @@ from a failure actually observed against live data:
 - [x] Acceptance criteria measured rather than intended
 
 **Phase 3 · Scale — open**
-- [ ] Close the three criteria still below target: forecast MAPE, alert volume,
-      and a labelled set so anomaly precision can be measured at all
+- [ ] Review enough alerts by hand to make precision measurable — the
+      rule-derived labels cover recall, but only a person can call an alert
+      spurious
 - [ ] More global sources (IATA, Eurostat beyond the eight airports held)
 - [ ] Route-level and lane-level intelligence
 - [ ] Commodity detail, which needs a source that publishes it —

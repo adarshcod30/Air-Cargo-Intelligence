@@ -18,6 +18,7 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from services.analytics.anomaly import STRUCTURAL_MIN_MT
 from services.analytics.forecast import MAX_PUBLISHABLE_MAPE
 from services.common.config import SETTINGS
 from services.common.logging import get_logger
@@ -161,19 +162,19 @@ def measure_forecast(session: Session) -> list[Measurement]:
     """)).scalar() or 0
     coverage_pct = (100.0 * len(rows) / eligible) if eligible else 0.0
 
-    # Interval coverage: how often the actual falls inside the published
-    # 80% band, measured against periods the warehouse already holds.
+    # Interval coverage, pooled over backtest folds rather than over the
+    # handful of forecast periods that have since arrived. Waiting for real
+    # time to pass gave six samples, which cannot distinguish an 80%
+    # interval from a 50% one; walking forward over held-out points uses no
+    # future information and gives a number now.
+    #
+    # Pooled as counts, not as a mean of per-series percentages: each series
+    # contributes three folds, and averaging percentages would weight a
+    # series with one usable fold the same as one with three.
     coverage = session.execute(text("""
-        SELECT SUM(CASE WHEN f.lower_kg <= a.actual AND a.actual <= f.upper_kg
-                        THEN 1 ELSE 0 END), count(*)
-        FROM v_forecast f
-        JOIN (
-            SELECT COALESCE(airport_iata, airline_name) AS entity_key,
-                   period, direction, SUM(tonnage_kg) AS actual
-            FROM v_cargo_fact GROUP BY 1,2,3
-        ) a ON a.entity_key = f.entity_key AND a.period = f.period
-           AND a.direction = f.direction
-        WHERE f.lower_kg IS NOT NULL
+        SELECT COALESCE(SUM(interval_hits), 0), COALESCE(SUM(interval_folds), 0)
+        FROM v_forecast
+        WHERE horizon = 1 AND interval_folds IS NOT NULL AND interval_folds > 0
     """)).one()
     inside, total = int(coverage[0] or 0), int(coverage[1] or 0)
     cov_pct = (inside / total * 100) if total else None
@@ -200,10 +201,11 @@ def measure_forecast(session: Session) -> list[Measurement]:
         Measurement(
             "Forecast", "80% interval coverage", "75–85%",
             (f"{cov_pct:.1f}% ({inside}/{total})" if total >= 20
-             else f"insufficient overlap ({total} sample(s))"),
+             else f"insufficient folds ({total})"),
             ((75 <= cov_pct <= 85) if total >= 20 else None),
-            "needs at least 20 forecast periods the warehouse already holds; "
-            "measurable once a forecast horizon has elapsed",
+            "pooled over rolling-origin folds, using the same band the "
+            "forecast publishes; a band that is too wide fails this as "
+            "surely as one that is too narrow",
         ),
     ]
 
@@ -232,9 +234,62 @@ def measure_anomaly(session: Session) -> list[Measurement]:
                     f"{float(distinct_events or 0):.1f}",
                     float(distinct_events or 0) <= 5,
                     "the number a reader actually sees"),
-        Measurement("Anomaly", "Precision at 80% recall", "≥ 0.70", "not measured", None,
-                    "needs a hand-labelled set of known cargo events; not built"),
+        *_precision_measurements(session),
     ]
+
+
+def _precision_measurements(session: Session) -> list[Measurement]:
+    """What the label set supports, and what it does not.
+
+    Recall is measurable from rules: a service starting or stopping is an
+    event nobody would argue about. Precision is not, because a false
+    positive requires a label asserting that an alert is spurious, and no
+    rule can assert that - only a person looking at the month can. The
+    measurement says which of the two it has evidence for rather than
+    reporting a precision of 1.0 over a set containing no candidate for a
+    false positive.
+    """
+    from services.evaluation.anomaly_labels import evaluate
+
+    r = evaluate(session)
+    if not r.get("labelled_events"):
+        return [Measurement("Anomaly", "Precision at 80% recall", "≥ 0.70",
+                            "no labels", None, "run services.evaluation.anomaly_labels --seed")]
+
+    human = r.get("human_labels", 0)
+    spurious = r.get("spurious", 0)
+    m_recall = r.get("recall_material_events")
+
+    out = [
+        Measurement(
+            "Anomaly", "Recall on labelled events", "≥ 0.70",
+            # The material counts, not the overall ones. Mixing them printed
+            # "1.00 (9/7)" - a fraction above one is proof the numerator and
+            # denominator are measuring different populations.
+            f"{m_recall:.2f} ({r['material_true_positives']}/{r['material_events']})"
+            if m_recall is not None else "no material events labelled",
+            (m_recall >= 0.70) if m_recall is not None else None,
+            f"over {r['material_events']} events above the reporting bar "
+            f"(with {r['true_positives']} alerts matching a labelled event in all); "
+            f"{r['suppressed_below_bar']} further events are real and "
+            f"deliberately not alerted, being under {STRUCTURAL_MIN_MT:.0f} MT"),
+    ]
+    if spurious == 0:
+        out.append(Measurement(
+            "Anomaly", "Precision at 80% recall", "≥ 0.70",
+            f"awaiting review ({human} human labels)", None,
+            f"{r['false_positives']} false positives among {r['labelled_events']} labelled "
+            f"events, but the set contains no labelled spurious alert, so the "
+            f"figure is not evidence. Review the queue: "
+            f"python -m services.evaluation.anomaly_labels --pending 20"))
+    else:
+        p = r.get("precision")
+        out.append(Measurement(
+            "Anomaly", "Precision at 80% recall", "≥ 0.70",
+            f"{p:.2f}" if p is not None else "not computable",
+            (p >= 0.70) if p is not None else None,
+            f"over {r['labelled_events']} labelled events, {human} of them human-judged"))
+    return out
 
 
 # ------------------------------------------------------------------ chat --
@@ -293,12 +348,27 @@ def measure_chat(session: Session) -> list[Measurement]:
 # ------------------------------------------------------------------ main --
 
 def measure_all(session: Session) -> list[Measurement]:
+    """Every group reports, including the ones that could not.
+
+    A failing group used to be logged and dropped, which shortened the list
+    the summary counts - so four missing anomaly criteria still printed
+    "10/10 measurable criteria met". A tally computed only over the
+    criteria that succeeded can never report a failure. The failure is
+    carried into the results as a failed row instead of disappearing from
+    the denominator.
+    """
     out: list[Measurement] = []
     for fn in (measure_ingestion, measure_forecast, measure_anomaly, measure_chat):
         try:
             out.extend(fn(session))
         except Exception as exc:
             log.error(f"{fn.__name__} failed: {type(exc).__name__}: {exc}")
+            out.append(Measurement(
+                fn.__name__.replace("measure_", "").title(),
+                "Measurement itself failed", "runs",
+                f"{type(exc).__name__}: {exc}", False,
+                "this group reported nothing; the criteria below it are absent, "
+                "not passing"))
     return out
 
 

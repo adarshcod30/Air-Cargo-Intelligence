@@ -39,7 +39,6 @@ ingest = [
 # analytics stage runs offline and the API reads back its rows.
 analytics = [
     "statsmodels>=0.14",
-    "scikit-learn>=1.5",
     "numpy>=1.26",
 ]
 migrate = ["alembic>=1.13"]

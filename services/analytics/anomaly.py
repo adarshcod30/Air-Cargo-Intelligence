@@ -185,18 +185,69 @@ def detect_seasonal(
     return out
 
 
+# Months either side needed before a gap counts as a service starting or
+# stopping rather than a missing report.
+STRUCTURAL_WINDOW = 3
+
+
+def detect_structural(
+    periods: list[str], values: list[float], window: int = STRUCTURAL_WINDOW
+) -> list[AnomalyPoint]:
+    """Service starting or stopping, which the z-score detectors cannot see.
+
+    Both existing detectors score how far a month sits from its own
+    history, and a service that has just started has no history to sit far
+    from. Worse, the statistical detector deliberately trims leading zeros -
+    added to stop a launch curve reporting "+6,628% growth", which it should
+    not - and that removes the very transition an operations team most wants
+    named. A ground-truth set of 41 unambiguous starts and stops found the
+    feed catching none of them.
+
+    These carry no deviation percentage. A change from zero has no
+    meaningful ratio, and printing one was the original defect; the event is
+    reported in words instead.
+    """
+    out: list[AnomalyPoint] = []
+    n = len(values)
+    for i in range(n):
+        before = values[max(0, i - window):i]
+        after = values[i + 1:i + 1 + window]
+        if len(before) < window or len(after) < window:
+            continue
+        started = all(v == 0 for v in before) and all(v > 0 for v in after) and values[i] > 0
+        stopped = all(v > 0 for v in before) and all(v == 0 for v in after)
+        if not (started or stopped):
+            continue
+        level = float(np.median(after if started else before))
+        out.append(AnomalyPoint(
+            period=periods[i],
+            observed_kg=float(values[i]),
+            # The level either side is the honest comparison: what was being
+            # handled before, or what is being handled now.
+            expected_kg=0.0 if started else level,
+            deviation_pct=None,
+            z_score=None,
+            method="service_started" if started else "service_stopped",
+            severity="HIGH" if level >= 1_000_000 else "MEDIUM",
+        ))
+    return out
+
+
 def detect(periods: list[str], values: list[float], threshold: float = 3.0) -> list[AnomalyPoint]:
     """Both detectors, with agreement raising severity.
 
     A point both methods flag is far more likely to be real, so it is
     promoted rather than reported twice - which also keeps the feed short.
     """
+    # Structural transitions take precedence: a service that has started or
+    # stopped is that event, not an outlier in a distribution.
+    structural = {a.period: a for a in detect_structural(periods, values)}
     stat = {a.period: a for a in detect_statistical(periods, values, threshold)}
     # The seasonal detector keeps its own, stricter threshold: residual
     # z-scores are not on the same scale as raw ones.
     seas = {a.period: a for a in detect_seasonal(periods, values)}
-    merged: list[AnomalyPoint] = []
-    for p in sorted(set(stat) | set(seas)):
+    merged: list[AnomalyPoint] = list(structural.values())
+    for p in sorted((set(stat) | set(seas)) - set(structural)):
         if p in stat and p in seas:
             a = seas[p]                       # the seasonally aware estimate
             a.method = "consensus"
@@ -219,6 +270,13 @@ MATERIAL_MIN_MT = 500.0
 MATERIAL_MIN_DEVIATION_PCT = 25.0
 
 
+# A service starting or stopping is worth naming at a lower volume than a
+# fluctuation is: the fact of the change carries the information, not its
+# size. Still barred at trivial volumes, so a handful of tonnes appearing at
+# a minor field does not reach an operations feed.
+STRUCTURAL_MIN_MT = 50.0
+
+
 def is_material(point: AnomalyPoint) -> bool:
     """Is this movement large enough, in absolute terms, to act on?
 
@@ -229,6 +287,13 @@ def is_material(point: AnomalyPoint) -> bool:
     """
     observed_mt = (point.observed_kg or 0.0) / 1000.0
     expected_mt = (point.expected_kg or 0.0) / 1000.0
+
+    if point.method in ("service_started", "service_stopped"):
+        # No deviation ratio exists for a change from or to zero, so the
+        # percentage test cannot apply. Requiring one excluded this class
+        # entirely - the detector found none of the 41 known transitions.
+        return max(observed_mt, expected_mt) >= STRUCTURAL_MIN_MT
+
     if max(observed_mt, expected_mt) < MATERIAL_MIN_MT:
         return False
     if abs(point.deviation_pct or 0.0) < MATERIAL_MIN_DEVIATION_PCT:

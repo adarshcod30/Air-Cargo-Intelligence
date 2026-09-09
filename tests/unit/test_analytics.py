@@ -386,3 +386,189 @@ class TestAlertMateriality:
                               expected_kg=49_000_000.0, deviation_pct=2.0,
                               z_score=3.1, method="robust_z", severity="LOW")
         assert not is_material(steady)
+
+
+class TestStructuralTransitions:
+    """Service starting or stopping, which the z-score detectors cannot see."""
+
+    def test_a_service_starting_is_detected(self):
+        """No history means nothing to be an outlier against.
+
+        Both z-score detectors measure distance from a series' own past, and
+        a service that has just begun has none. A ground-truth set of 27
+        unambiguous starts and stops found the feed catching zero of them.
+        """
+        from services.analytics.anomaly import detect_structural
+
+        vals = [0.0, 0.0, 0.0, 800.0, 850.0, 820.0, 840.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert [a.method for a in out] == ["service_started"]
+        assert out[0].period == "2026-04"
+
+    def test_a_service_stopping_is_detected(self):
+        from services.analytics.anomaly import detect_structural
+
+        vals = [800.0, 850.0, 820.0, 0.0, 0.0, 0.0, 0.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert [a.method for a in out] == ["service_stopped"]
+
+    def test_no_deviation_percentage_is_invented(self):
+        """A change from zero has no ratio, and printing one was the defect.
+
+        The original feed reported a launch as '+6,628% growth', which is
+        arithmetic on an empty baseline. The event is reported in words.
+        """
+        from services.analytics.anomaly import detect_structural
+
+        vals = [0.0, 0.0, 0.0, 800.0, 850.0, 820.0, 840.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert out[0].deviation_pct is None
+        assert out[0].z_score is None
+
+    def test_a_single_missing_month_is_not_a_transition(self):
+        """One zero between reporting months is a gap, not a service ending."""
+        from services.analytics.anomaly import detect_structural
+
+        vals = [800.0, 850.0, 820.0, 0.0, 830.0, 810.0, 840.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        assert detect_structural(per, vals) == []
+
+    def test_structural_events_survive_the_materiality_filter(self):
+        """The percentage test cannot apply where there is no percentage.
+
+        Requiring a deviation percentage excluded this class outright, which
+        is why the detector found none of the known transitions.
+        """
+        from services.analytics.anomaly import detect_structural, is_material
+
+        vals = [0.0, 0.0, 0.0, 800_000.0, 850_000.0, 820_000.0, 840_000.0]
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert out and is_material(out[0])
+
+    def test_a_trivial_service_is_still_suppressed(self):
+        """A field handling a tonne a month does not reach an operations feed."""
+        from services.analytics.anomaly import detect_structural, is_material
+
+        vals = [0.0, 0.0, 0.0, 1_000.0, 1_100.0, 900.0, 1_050.0]   # ~1 MT
+        per = [f"2026-{i + 1:02d}" for i in range(len(vals))]
+        out = detect_structural(per, vals)
+        assert out and not is_material(out[0])
+
+
+class TestIntervalCalibration:
+    """An 80% band should contain the truth about 80% of the time."""
+
+    def test_the_published_band_is_the_band_measured(self):
+        """Backtesting a band the product does not emit measures nothing."""
+        from services.analytics.forecast import _simple_interval, forecast
+
+        vals = [100.0 + (i % 5) for i in range(20)]
+        per = [f"2020-{i + 1:02d}" for i in range(20)]
+        out = forecast(per, vals, horizon=1)
+        assert out
+        if out[0].model != "sarima":
+            lo, hi = _simple_interval(out[0].predicted_kg, vals, out[0].backtest_mape)
+            assert abs(lo - out[0].lower_kg) < 0.01
+            assert abs(hi - out[0].upper_kg) < 0.01
+
+    def test_coverage_is_counted_not_averaged(self):
+        """Counts pool across series; percentages of three folds do not."""
+        from services.analytics.forecast import backtest_interval_coverage
+
+        vals = [100.0 + (i % 4) for i in range(20)]
+        hits, folds = backtest_interval_coverage(vals, 12, "naive", 5.0)
+        assert folds > 0 and 0 <= hits <= folds
+
+
+class TestLabelAndDetectorAgree:
+    """The ground-truth rule and the detector are deliberately separate code.
+
+    Sharing an implementation would make recall tautological: the detector
+    would be scored against its own output. They are independent statements
+    of one definition, which is why the labelled set could report 0 of 41
+    events found - the detector did not implement the definition at all.
+
+    Independence has a cost: the two can drift apart, and then recall
+    measures agreement between two different questions. These tests pin the
+    definition, not the code.
+    """
+
+    def test_both_sides_use_the_same_window(self):
+        from services.analytics.anomaly import STRUCTURAL_WINDOW
+        from services.evaluation.anomaly_labels import WINDOW
+
+        assert STRUCTURAL_WINDOW == WINDOW
+
+    def test_the_detector_finds_what_the_rule_would_label(self):
+        """Run both definitions over the same series and compare.
+
+        The rule is restated here rather than imported, because its own form
+        is embedded in a SQL-backed seeder.
+        """
+        from services.analytics.anomaly import STRUCTURAL_WINDOW as W
+        from services.analytics.anomaly import detect_structural
+
+        cases = [
+            [0, 0, 0, 500, 600, 550, 580],
+            [500, 600, 550, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [100, 120, 110, 130, 115, 125, 118],
+            [0, 0, 500, 600, 0, 0, 700],       # too ragged to call
+        ]
+        for vals in cases:
+            v = [float(x) for x in vals]
+            per = [f"2026-{i + 1:02d}" for i in range(len(v))]
+
+            expected = set()
+            for i in range(len(v)):
+                before, after = v[max(0, i - W):i], v[i + 1:i + 1 + W]
+                if len(before) < W or len(after) < W:
+                    continue
+                if all(x == 0 for x in before) and all(x > 0 for x in after) and v[i] > 0:
+                    expected.add((per[i], "service_started"))
+                elif all(x > 0 for x in before) and all(x == 0 for x in after):
+                    expected.add((per[i], "service_stopped"))
+
+            found = {(a.period, a.method) for a in detect_structural(per, v)}
+            assert found == expected, f"disagreement on {vals}"
+
+
+class TestAcceptanceReporting:
+    """A tally computed only over what succeeded can never report failure."""
+
+    def test_a_group_that_raises_still_appears_in_the_results(self, monkeypatch):
+        """Dropping the group shortened the list the summary counts.
+
+        Four anomaly criteria vanished on a KeyError and the report still
+        printed '10/10 measurable criteria met'. The numerator and the
+        denominator both shrank, so the ratio stayed clean while the
+        component it described was absent.
+        """
+        from services.evaluation import acceptance
+
+        def boom(_session):
+            raise KeyError("labels")
+
+        monkeypatch.setattr(acceptance, "measure_anomaly", boom)
+        rows = acceptance.measure_all(None)
+
+        failed = [m for m in rows if m.passes is False]
+        assert failed, "a raising group left no trace in the results"
+        assert any("KeyError" in str(m.measured) for m in failed)
+
+    def test_the_failure_counts_against_the_tally(self, monkeypatch):
+        from services.evaluation import acceptance
+
+        def boom(_session):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(acceptance, "measure_chat", boom)
+        rows = acceptance.measure_all(None)
+
+        measurable = [m for m in rows if m.passes is not None]
+        met = [m for m in measurable if m.passes]
+        assert len(met) < len(measurable), "everything still reported as met"

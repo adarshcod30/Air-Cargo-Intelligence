@@ -86,6 +86,7 @@ class AnalyticsAgent(Agent):
             which is the one that explains the movement. The others are not
             evidence of anything the first does not already say.
             """
+            _outranks = lambda new, old: self._rank(new) > self._rank(old)  # noqa: E731
             candidates: dict[tuple, tuple] = {}
             for sr in self.context["series"]:
                 for a in anomaly_mod.detect(sr.periods, sr.values):
@@ -93,7 +94,7 @@ class AnalyticsAgent(Agent):
                         continue
                     key = (sr.grain, sr.entity_key, a.period)
                     best = candidates.get(key)
-                    if best is None or abs(a.deviation_pct or 0) > abs(best[1].deviation_pct or 0):
+                    if best is None or _outranks(a, best[1]):
                         candidates[key] = (sr, a)
             rows = list(candidates.values())
             self.context["anomaly_rows"] = rows
@@ -147,6 +148,8 @@ class AnalyticsAgent(Agent):
                     "horizon": f.horizon, "predicted_kg": f.predicted_kg,
                     "lower_kg": f.lower_kg, "upper_kg": f.upper_kg,
                     "model": f.model, "backtest_mape": f.backtest_mape,
+                    "interval_hits": f.interval_hits,
+                    "interval_folds": f.interval_folds,
                 }
                 for sr, f in self.context.get("forecast_rows", [])
             ]
@@ -182,7 +185,8 @@ class AnalyticsAgent(Agent):
                     ),
                     "forecast": batched_upsert(
                         s, Forecast, "forecast_natural_key",
-                        ["predicted_kg", "lower_kg", "upper_kg", "backtest_mape"],
+                        ["predicted_kg", "lower_kg", "upper_kg", "backtest_mape",
+                         "interval_hits", "interval_folds"],
                         forecasts,
                         lambda r: (r["grain"], r["entity_key"], r["direction"],
                                    r["period_label"], r["model"]),
@@ -191,6 +195,20 @@ class AnalyticsAgent(Agent):
                 s.commit()
             self.context["written"] = written
             return written
+
+    @staticmethod
+    def _rank(point) -> tuple[int, float]:
+        """How strongly an alert claims to explain an entity-period.
+
+        A service starting or stopping outranks any fluctuation: it says
+        what happened, where a z-score only says how far the month sat from
+        its neighbours. It also carries no deviation percentage, because a
+        change from zero has no ratio - so ranking on `abs(deviation_pct or
+        0)` scored it zero and lost it to whichever other direction happened
+        to be flagged. The most informative class was ranked last.
+        """
+        structural = point.method in ("service_started", "service_stopped")
+        return (1 if structural else 0, abs(point.deviation_pct or 0.0))
 
     @staticmethod
     def _retire_superseded(s, anomalies: list[dict], forecasts: list[dict]) -> None:
