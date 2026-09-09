@@ -244,6 +244,15 @@ class Pipeline:
         run = agent.run("canonicalise airports, units and periods", facts=facts)
         self.report.runs.append(run)
         accepted = agent.context.get("accepted", [])
+        # Facts in and nothing out is a stage failure, not a quiet result.
+        # The pipeline persisted zero rows and printed a clean summary,
+        # which on a first run against an empty warehouse would have looked
+        # like a working pipeline that had ingested nothing.
+        if facts and not accepted:
+            raise RuntimeError(
+                f"reconciliation returned nothing from {len(facts):,} facts; "
+                f"the stage ended before partitioning. Last steps: "
+                f"{[c.tool for c in run.calls][-4:]}")
         self.report.facts_reconciled = len(accepted)
         self.report.facts_quarantined = len(agent.context.get("quarantined", []))
         self.report.review_queue = agent.context.get("review_queue", [])

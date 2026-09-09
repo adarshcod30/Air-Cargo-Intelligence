@@ -177,7 +177,19 @@ class ReconciliationAgent(Agent):
         return Decision(None, {}, "reconciliation complete")
 
     def is_goal_met(self, context: dict[str, Any]) -> bool:
-        return "review_queue" in context
+        """Partitioned rows are the product. The review queue is a by-product.
+
+        This tested only for the review queue, which build_review_queue
+        fills. The heuristic plan happens to call partition first, so the
+        two always appeared together and the check looked correct. The
+        model policy called build_review_queue first, the goal read as met,
+        the loop ended before partition ran, and 12,790 reconciled facts
+        left the stage as zero with the run marked successful.
+
+        A completion condition that can be satisfied without producing the
+        output is not a completion condition.
+        """
+        return "accepted" in context and "review_queue" in context
 
     def summarise(self, context: dict[str, Any]) -> str:
         acc = len(context.get("accepted", []))

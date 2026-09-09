@@ -817,3 +817,50 @@ class TestReextraction:
         )
         agent.tools["fetch_document"]()
         assert called["u"] == "https://example.test/y"
+
+
+class TestReconciliationCompletion:
+    """A stage that produces nothing must not report success."""
+
+    def test_the_goal_needs_the_product_not_a_by_product(self):
+        """It tested for review_queue, which is a by-product of the run.
+
+        The heuristic plan calls partition before build_review_queue, so
+        the two always appeared together and the check looked right. The
+        model policy called them in the other order, the goal read as met
+        before partition ran, and 12,790 facts left the stage as zero.
+        """
+        from services.agents.reconciliation_agent import ReconciliationAgent
+
+        agent = ReconciliationAgent()
+        assert not agent.is_goal_met({"review_queue": []})
+        assert not agent.is_goal_met({"accepted": [1, 2]})
+        assert agent.is_goal_met({"accepted": [1, 2], "review_queue": []})
+
+    def test_facts_in_and_nothing_out_raises(self):
+        """Zero from twelve thousand is a failure, and it printed as a run."""
+        from services.agents.orchestrator import Pipeline
+        from services.common.models import AgentRun
+
+        class Agent:
+            def __init__(self):
+                self.context = {"accepted": [], "quarantined": []}
+
+            def run(self, goal, **kw):
+                return AgentRun(agent="reconciliation", goal=goal,
+                                policy="llm").finish(True, "0/0")
+
+        pipeline = Pipeline()
+        import services.agents.orchestrator as orch
+        original = orch.ReconciliationAgent
+        orch.ReconciliationAgent = Agent
+        try:
+            with pytest.raises(RuntimeError, match="returned nothing"):
+                pipeline.reconcile([object(), object()])
+        finally:
+            orch.ReconciliationAgent = original
+
+    def test_an_empty_input_is_still_fine(self):
+        from services.agents.orchestrator import Pipeline
+
+        assert Pipeline().reconcile([]) == []

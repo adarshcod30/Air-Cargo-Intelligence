@@ -642,6 +642,13 @@ exists for whoever does:
 python -m services.evaluation.anomaly_labels --seed      # rule-derived labels
 python -m services.evaluation.anomaly_labels --pending 20 # highest-impact unlabelled alerts
 python -m services.evaluation.anomaly_labels --report     # precision, recall, and what they rest on
+
+# The queue prints the exact command for each row, including the grain,
+# because those are the two things a person retyping them gets wrong and
+# both fail quietly: a label at the wrong grain joins to no alert and
+# never counts. Pass --grain AIRLINE for a carrier.
+python -m services.evaluation.anomaly_labels --grain AIRLINE \
+    --label 'Jet Airways' 2007-FY INTERNATIONAL SPURIOUS 'restated by the publisher'
 ```
 
 Every figure it prints carries its label count and how many came from a
@@ -836,19 +843,28 @@ python -m services.agents.orchestrator --all --limit 8
 ```
 
 ```bash
-# 4. Create the warehouse and load the facts into it
+# 4. Replay extraction over documents already fetched, without crawling.
+#    Discovery is idempotent, so once the corpus is current a crawl finds
+#    nothing new and reports zero. This re-measures the corpus instead, and
+#    is how to check a parser change without deleting the warehouse. It
+#    reads the archived bytes, so it puts no load on the publishers.
+python -m services.agents.orchestrator --reextract
+```
+
+```bash
+# 5. Create the warehouse and load the facts into it
 createdb air_cargo
 alembic upgrade head
 python -m services.warehouse.loader
 ```
 
 ```bash
-# 5. Compute trends, anomalies and forecasts
+# 6. Compute trends, anomalies and forecasts
 python -m services.agents.analytics_agent
 ```
 
 ```bash
-# 6. Serve the API and the dashboard
+# 7. Serve the API and the dashboard
 uvicorn services.api.main:app --reload
 # dashboard  http://127.0.0.1:8000/
 # API docs   http://127.0.0.1:8000/docs
