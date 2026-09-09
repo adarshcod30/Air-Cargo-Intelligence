@@ -144,11 +144,24 @@
         unusual. The shaded band is the range the forecast considers likely.
       </div>
 
-      <nav class="subtabs" data-for="airport">
-        <button class="subtab is-active" data-tab="trend">Trend &amp; forecast</button>
-        <button class="subtab" data-tab="drivers">What drove it</button>
-        <button class="subtab" data-tab="flags">Summary &amp; flags</button>
-      </nav>
+      <div class="tabbar">
+        <nav class="subtabs" data-for="airport">
+          <button class="subtab is-active" data-tab="trend">Trend &amp; forecast</button>
+          <button class="subtab" data-tab="drivers">What drove it</button>
+          <button class="subtab" data-tab="flags">Summary &amp; flags</button>
+        </nav>
+        <!-- Which airport is a property of the page, not of one tab. Leaving
+             it inside the first panel meant the other tabs offered no way to
+             change it and quietly kept showing whatever was chosen there. -->
+        <div class="page-controls">
+          <select id="airport-pick" class="sel" aria-label="Airport"></select>
+          <select id="airport-direction" class="sel" aria-label="Direction">
+            <option value="TOTAL">All freight</option>
+            <option value="INTERNATIONAL">International</option>
+            <option value="DOMESTIC">Domestic</option>
+          </select>
+        </div>
+      </div>
 
       <div class="tabpanel is-active" data-tab="trend">
       <article class="panel">
@@ -156,14 +169,6 @@
           <div>
             <h2 id="airport-title">Select an airport</h2>
             <p class="panel-sub" id="airport-sub">Monthly freight tonnage with a three-month projection.</p>
-          </div>
-          <div class="controls">
-            <select id="airport-pick" class="sel" aria-label="Airport"></select>
-            <select id="airport-direction" class="sel" aria-label="Direction">
-              <option value="TOTAL">All freight</option>
-              <option value="INTERNATIONAL">International</option>
-              <option value="DOMESTIC">Domestic</option>
-            </select>
           </div>
         </header>
         <div class="panel-body">
@@ -208,25 +213,30 @@
         what was already flying.
       </div>
 
-      <nav class="subtabs" data-for="operations">
-        <button class="subtab is-active" data-tab="growth">Growth</button>
-        <button class="subtab" data-tab="airports">Airports</button>
-        <button class="subtab" data-tab="carriers">Carriers</button>
-        <button class="subtab" data-tab="market">Market</button>
-      </nav>
+      <div class="tabbar">
+        <nav class="subtabs" data-for="operations">
+          <button class="subtab is-active" data-tab="growth">Growth</button>
+          <button class="subtab" data-tab="airports">Airports</button>
+          <button class="subtab" data-tab="carriers">Carriers</button>
+          <button class="subtab" data-tab="market">Market</button>
+        </nav>
+        <!-- One direction control for the view. Three separate ones, one per
+             tab, disagreed with each other: choosing International on Growth
+             and moving to Airports silently reverted to all freight. -->
+        <div class="page-controls">
+          <select id="ops-direction" class="sel" aria-label="Traffic direction">
+            <option value="TOTAL">All freight</option>
+            <option value="INTERNATIONAL">International</option>
+            <option value="DOMESTIC">Domestic</option>
+          </select>
+        </div>
+      </div>
 
       <div class="tabpanel is-active" data-tab="growth">
       <article class="panel">
         <header class="panel-head">
           <div><h2>What drove the change</h2>
             <p class="panel-sub" id="attr-sub"></p></div>
-          <div class="controls">
-            <select id="attr-direction" class="sel" aria-label="Direction">
-              <option value="TOTAL">All freight</option>
-              <option value="INTERNATIONAL">International</option>
-              <option value="DOMESTIC">Domestic</option>
-            </select>
-          </div>
         </header>
         <div class="panel-body flush" id="attribution"><div class="loading">loading…</div></div>
         <footer class="panel-foot">Each airport&rsquo;s change measured against the <em>national</em> base, so
@@ -240,13 +250,6 @@
         <header class="panel-head">
           <div><h2>Cargo intensity by airport</h2>
             <p class="panel-sub">How much freight each departure actually lifted, and how much rode alongside each passenger. Volume and intensity are different things: the busiest airport is not always the most cargo-dense.</p></div>
-          <div class="controls">
-            <select id="ae-direction" class="sel" aria-label="Direction">
-              <option value="TOTAL">All freight</option>
-              <option value="INTERNATIONAL">International</option>
-              <option value="DOMESTIC">Domestic</option>
-            </select>
-          </div>
         </header>
         <div class="panel-body flush" id="airport-efficiency"><div class="loading">loading…</div></div>
         <footer class="panel-foot">Freight, flights and passengers taken from the same publisher&rsquo;s release for the same month.</footer>
@@ -272,13 +275,6 @@
         <header class="panel-head">
           <div><h2>Carrier efficiency</h2>
             <p class="panel-sub">Load factor, tonnes lifted per departure, and mail&rsquo;s share of what was carried.</p></div>
-          <div class="controls">
-            <select id="eff-direction" class="sel" aria-label="Direction">
-              <option value="TOTAL">All</option>
-              <option value="INTERNATIONAL">International</option>
-              <option value="DOMESTIC">Domestic</option>
-            </select>
-          </div>
         </header>
         <div class="panel-body flush" id="efficiency"><div class="loading">loading…</div></div>
         <footer class="panel-foot" id="eff-foot"></footer>

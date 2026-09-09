@@ -142,7 +142,9 @@ def pearson(xs: list[float], ys: list[float]) -> float | None:
     Refuses fewer than four pairs and a constant series: both produce a
     number that looks like evidence and is not.
     """
-    pairs = [(x, y) for x, y in zip(xs, ys)
+    # strict=True: correlating series of different lengths is a bug in
+    # the caller, and zip would otherwise hide it by truncating.
+    pairs = [(x, y) for x, y in zip(xs, ys, strict=True)
              if x is not None and y is not None
              and math.isfinite(x) and math.isfinite(y)]
     n = len(pairs)

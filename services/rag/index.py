@@ -120,7 +120,10 @@ def build(limit: int | None = None, rebuild: bool = False) -> dict:
                 continue
 
             vectors = embedder.embed_batch([c.content for c, _ in fresh])
-            for (c, sha), vec in zip(fresh, vectors):
+            # embed_batch returns one vector per input, in order. If it
+            # ever does not, storing a chunk against another chunk's
+            # vector is far worse than failing here.
+            for (c, sha), vec in zip(fresh, vectors, strict=True):
                 # pgvector accepts its own literal form; the portable
                 # fallback stores the same JSON array as text, so one
                 # code path writes both and the retriever reads either.

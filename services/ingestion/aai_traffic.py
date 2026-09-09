@@ -34,14 +34,18 @@ from dataclasses import dataclass
 from services.common.logging import get_logger
 from services.common.models import Direction
 from services.ingestion.fetcher import fetch
-from services.ingestion.normalise import AirportResolver
+from services.ingestion.normalise import (
+    AirportResolver,
+    month_to_iso,
+    parse_number,
+    strip_non_latin,
+)
 from services.ingestion.parsers.aai_freight import (
     _MONTH_COMPACT_RX,
     _MONTH_RX,
     _NOISE,
     _STANDALONE_YEAR_RX,
 )
-from services.ingestion.normalise import month_to_iso, parse_number, strip_non_latin
 
 log = get_logger(__name__)
 

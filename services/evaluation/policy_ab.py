@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from services.agents.base import Agent
 from services.agents.extraction_agent import ExtractionAgent
 from services.agents.policy import BedrockPolicy, HeuristicPolicy
 from services.common.bedrock import get_client

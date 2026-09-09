@@ -13,7 +13,6 @@ storable here, by constraint rather than convention.
 from __future__ import annotations
 
 import hashlib
-import json
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session

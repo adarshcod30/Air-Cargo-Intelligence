@@ -503,6 +503,19 @@ a.btn { text-decoration: none; color: var(--ink-2); }
    first panel was the only one most readers ever saw. Grouping them under
    tabs makes the alternatives visible at the top instead of buried below
    the fold, and lets each tab fetch only its own data. */
+/* Tabs and the controls that apply to the whole view share one row, which
+   is what makes it legible that the controls are not part of any single
+   tab. */
+.tabbar {
+  display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg); padding-top: 2px;
+}
+.tabbar .subtabs { border-bottom: 0; position: static; flex: 1; margin-bottom: 0; }
+.page-controls { display: flex; gap: 8px; padding-bottom: 7px; flex-wrap: wrap; }
+.page-controls .sel { max-width: 320px; }
+
 .subtabs {
   display: flex; gap: 2px; flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
@@ -532,6 +545,9 @@ a.btn { text-decoration: none; color: var(--ink-2); }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 900px) {
+  .tabbar { flex-direction: column; align-items: stretch; gap: 0; }
+  .page-controls { padding: 8px 0; }
+  .page-controls .sel { flex: 1; max-width: none; }
   .subtabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
   .subtabs::-webkit-scrollbar { display: none; }
   .subtab { padding: 9px 12px 10px; font-size: 13px; }

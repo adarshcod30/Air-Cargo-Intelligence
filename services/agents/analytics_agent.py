@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from services.agents.base import Agent, Decision

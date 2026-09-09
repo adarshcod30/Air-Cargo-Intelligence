@@ -118,6 +118,9 @@ const TAB_LOADERS = {
     carriers: () => { drawBelly(); drawEfficiency(); },
     market: () => drawConcentration(),
   },
+  // The airport view's panels are all drawn by drawAirport for the selected
+  // airport, so its tabs share one loader rather than three.
+  
   alerts: {
     flagged: () => loadAlerts(),
     written: () => loadInsights(),
@@ -133,11 +136,31 @@ const TAB_LOADERS = {
     health: () => loadHealth(),
   },
   airport: {
-    trend: () => {},           // the chart loads with the view
+    trend: () => {},
     drivers: () => {},
     flags: () => {},
   },
 };
+
+/* Forget what a view's tabs have loaded.
+
+   A control that applies to the whole view changes what every tab should
+   show. Without this, choosing a different airport on one tab and moving to
+   another still displayed the previous airport's figures - the tab had
+   already loaded once and never reconsidered. */
+function invalidateTabs(view, { except = null } = {}) {
+  for (const key of [...loadedTabs]) {
+    if (key.startsWith(`${view}/`) && key !== `${view}/${except}`) loadedTabs.delete(key);
+  }
+}
+
+function refreshView(view) {
+  const active = currentTab(view);
+  invalidateTabs(view, { except: null });
+  loadedTabs.add(`${view}/${active}`);
+  try { (TAB_LOADERS[view]?.[active] || (() => {}))(); }
+  catch (e) { console.error('refresh failed', view, active, e); }
+}
 
 function currentTab(view) {
   const nav = $(`.subtabs[data-for="${view}"]`);
@@ -429,13 +452,15 @@ async function drawAirport(iata) {
 
 /* Each panel is fetched by its own tab loader, so nothing is requested for
    a panel the reader has not opened. */
+const opsDirection = () => $('#ops-direction')?.value || 'TOTAL';
+
 async function loadOperations() {}
 
 async function drawAirportEfficiency() {
   const el = $('#airport-efficiency');
   el.innerHTML = '<div class="loading">loading…</div>';
   try {
-    const d = await api(`/api/v1/operations/airport-efficiency?limit=18&direction=${$('#ae-direction').value}`);
+    const d = await api(`/api/v1/operations/airport-efficiency?limit=18&direction=${opsDirection()}`);
     if (!d.rows.length) { el.innerHTML = '<div class="empty">no paired flight data</div>'; return; }
     const maxT = Math.max(...d.rows.map((r) => Number(r.tonnes_per_flight) || 0), 0.01);
     el.innerHTML = `<div class="rows">${d.rows.map((r) => `
@@ -456,7 +481,7 @@ async function drawAttribution() {
   const el = $('#attribution');
   el.innerHTML = '<div class="loading">loading…</div>';
   try {
-    const d = await api(`/api/v1/operations/attribution?direction=${$('#attr-direction').value}&top=12`);
+    const d = await api(`/api/v1/operations/attribution?direction=${opsDirection()}&top=12`);
     if (d.detail) { el.innerHTML = `<div class="empty">${esc(d.detail)}</div>`; return; }
 
     const sign = d.national_growth_pct >= 0 ? '+' : '';
@@ -490,7 +515,7 @@ async function drawAttribution() {
 async function drawConcentration() {
   const el = $('#concentration');
   try {
-    const d = await api('/api/v1/operations/concentration');
+    const d = await api(`/api/v1/operations/concentration?direction=${opsDirection()}`);
     const rows = d.rows.filter((r) => r.hhi);
     if (!rows.length) { el.innerHTML = '<div class="empty">not enough periods</div>'; return; }
     const last = rows[rows.length - 1], first = rows[0];
@@ -548,7 +573,7 @@ async function drawEfficiency() {
   const el = $('#efficiency');
   el.innerHTML = '<div class="loading">loading…</div>';
   try {
-    const d = await api(`/api/v1/operations/efficiency?limit=40&direction=${$('#eff-direction').value}`);
+    const d = await api(`/api/v1/operations/efficiency?limit=40&direction=${opsDirection()}`);
     if (!d.rows.length) { el.innerHTML = '<div class="empty">no paired capacity data</div>'; return; }
     el.innerHTML = `<div class="rows">${d.rows.map((r) => `
       <div class="row eff-row">
@@ -1000,9 +1025,14 @@ function init() {
   on('#rank-order', 'change', loadRankings);
   on('#airport-pick', 'change', (e) => drawAirport(e.target.value));
   on('#airport-direction', 'change', () => drawAirport($('#airport-pick').value));
-  on('#attr-direction', 'change', drawAttribution);
-  on('#ae-direction', 'change', drawAirportEfficiency);
-  on('#eff-direction', 'change', drawEfficiency);
+  // View-level controls redraw the visible tab and mark the rest stale, so
+  // a tab opened later reflects the current selection rather than whatever
+  // was chosen when it first loaded.
+  on('#ops-direction', 'change', () => refreshView('operations'));
+  on('#airport-direction', 'change', () => {
+    invalidateTabs('airport');
+    drawAirport($('#airport-pick').value);
+  });
   on('#fc-grain', 'change', loadForecasts);
   on('#fc-horizon', 'change', loadForecasts);
   on('#alert-grain', 'change', loadAlerts);

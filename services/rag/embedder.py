@@ -157,4 +157,4 @@ class Embedder:
 
 def cosine(a: list[float], b: list[float]) -> float:
     """Both backends emit normalised vectors, so this is a dot product."""
-    return sum(x * y for x, y in zip(a, b))
+    return sum(x * y for x, y in zip(a, b, strict=True))
