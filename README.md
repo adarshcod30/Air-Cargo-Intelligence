@@ -542,7 +542,7 @@ match the check instead.
 
 | Component | Metric | Target | Measured | Status |
 |---|---|---|---|---|
-| Ingestion | Rows reconciled without manual mapping | ≥ 95% | 99.6% (12,692/12,742) | **met** |
+| Ingestion | Rows reconciled without manual mapping<br><sub>measured by replaying extraction over the whole archived corpus, not by whatever the last crawl happened to touch</sub> | ≥ 95% | 99.6% (12,740/12,790) | **met** |
 | Ingestion | Documents either extracted or refused with a reason<br><sub>154 extracted, 44 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (198/198) | **met** |
 | Ingestion | INTL + DOM = TOTAL, recomputed from stored rows | ≥ 99% | 99.3% (1,640/1,651) | **met** |
 | Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
