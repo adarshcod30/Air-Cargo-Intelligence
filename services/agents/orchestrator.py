@@ -22,7 +22,7 @@ from services.agents.extraction_agent import ExtractionAgent
 from services.agents.reconciliation_agent import ReconciliationAgent
 from services.common.config import SETTINGS
 from services.common.logging import get_logger, redact
-from services.common.models import AgentRun, CargoFact, SourceDocument
+from services.common.models import AgentRun, CargoFact, Publisher, SourceDocument
 from services.ingestion import registry as source_registry
 from services.ingestion.seed import build_airport_crosswalk
 from services.ingestion.store import RawStore
@@ -78,6 +78,41 @@ class Pipeline:
         docs = self._discover(source)
         if limit:
             docs = docs[:limit]
+        return self._extract_all(docs)
+
+    def reextract(self, limit: int | None = None) -> list[CargoFact]:
+        """Run extraction again over documents already on disk.
+
+        Discovery is idempotent: once every document is ingested it finds
+        nothing new, and the run report legitimately reads zero. That is
+        fine for the pipeline and wrong for the acceptance table, which
+        reads reconciliation quality out of the last report and so loses
+        the measurement the moment the crawler catches up. It also means a
+        parser fix could not be re-measured without deleting the warehouse.
+
+        The raw store keeps every fetched document under its content hash,
+        so the bytes are already here. This replays extraction over them
+        and produces a report describing the corpus rather than the crawl.
+        """
+        seen: dict[str, SourceDocument] = {}
+        for row in self.store.ledger():
+            sha = row.get("sha256")
+            raw = row.get("raw_path")
+            if not sha or not raw or not Path(raw).exists():
+                continue
+            seen[sha] = SourceDocument(
+                publisher=Publisher(row["publisher"]),
+                source_url=row["source_url"],
+                sha256=sha,
+                media_type=row.get("media_type"),
+                byte_size=row.get("byte_size"),
+                raw_path=raw,
+                published_on=row.get("published_on"),
+                hints=row.get("hints") or {},
+            )
+        docs = list(seen.values())[: limit or None]
+        log.info(f"re-extracting {len(docs)} document(s) already in the raw store")
+        self.report.documents_discovered += len(docs)
         return self._extract_all(docs)
 
     def _discover(self, source) -> list[SourceDocument]:
@@ -263,12 +298,31 @@ class Pipeline:
             log.warning(f"could not persist traces to warehouse: {type(exc).__name__}: {exc}")
 
 
+def _print_summary(r) -> None:
+    print("\n" + "=" * 62)
+    print("INGESTION SUMMARY")
+    print("=" * 62)
+    print(f"  documents discovered   {r.documents_discovered}")
+    print(f"  documents extracted    {r.documents_extracted}")
+    print(f"  documents quarantined  {r.documents_quarantined}")
+    print(f"  facts extracted        {r.facts_extracted}")
+    print(f"  facts reconciled       {r.facts_reconciled}")
+    print(f"  facts quarantined      {r.facts_quarantined}")
+    print(f"  agent runs traced      {len(r.runs)}")
+    if r.review_queue:
+        print(f"  needs manual mapping   {len(r.review_queue)}: {r.review_queue[:6]}")
+    print("=" * 62)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Air Cargo Intelligence ingestion pipeline")
     ap.add_argument("--source", help="registry key, e.g. aai_freight")
     ap.add_argument("--all", action="store_true", help="run every ACTIVE source")
     ap.add_argument("--limit", type=int, default=None, help="max documents per source")
     ap.add_argument("--seed", action="store_true", help="(re)build the airport crosswalk")
+    ap.add_argument("--reextract", action="store_true",
+                    help="re-run extraction over documents already fetched, "
+                         "without crawling")
     args = ap.parse_args()
 
     if args.seed:
@@ -278,6 +332,13 @@ def main() -> None:
 
     pipeline = Pipeline()
     facts: list[CargoFact] = []
+
+    if args.reextract:
+        facts.extend(pipeline.reextract(limit=args.limit))
+        reconciled = pipeline.reconcile(facts)
+        pipeline.persist(reconciled)
+        _print_summary(pipeline.report)
+        return
 
     keys = (
         [s.key for s in source_registry.active() if s.key != "openflights_airports"]
@@ -297,20 +358,7 @@ def main() -> None:
     reconciled = pipeline.reconcile(facts)
     pipeline.persist(reconciled)
 
-    r = pipeline.report
-    print("\n" + "=" * 62)
-    print("INGESTION SUMMARY")
-    print("=" * 62)
-    print(f"  documents discovered   {r.documents_discovered}")
-    print(f"  documents extracted    {r.documents_extracted}")
-    print(f"  documents quarantined  {r.documents_quarantined}")
-    print(f"  facts extracted        {r.facts_extracted}")
-    print(f"  facts reconciled       {r.facts_reconciled}")
-    print(f"  facts quarantined      {r.facts_quarantined}")
-    print(f"  agent runs traced      {len(r.runs)}")
-    if r.review_queue:
-        print(f"  needs manual mapping   {len(r.review_queue)}: {r.review_queue[:6]}")
-    print("=" * 62)
+    _print_summary(pipeline.report)
 
 
 if __name__ == "__main__":

@@ -332,6 +332,29 @@ def record(session: Session, entity_key: str, period: str, direction: str,
     """Store one human judgement. Human labels are never overwritten by seeding."""
     if label not in ("GENUINE", "SPURIOUS"):
         raise ValueError("label must be GENUINE or SPURIOUS")
+    if grain not in ("AIRPORT", "AIRLINE"):
+        raise ValueError("grain must be AIRPORT or AIRLINE")
+
+    # The natural key includes grain, so an airline labelled as an airport
+    # is stored happily and then joins to nothing. Precision would not
+    # move and nothing would say why. Checking the period exists catches
+    # the other half of the same mistake.
+    if not session.execute(text(
+        "SELECT 1 FROM dim_period WHERE period_label = :p"), {"p": period}).first():
+        raise ValueError(f"no period {period!r} in the warehouse")
+    hit = session.execute(text("""
+        SELECT 1 FROM anomaly a JOIN dim_period p ON p.period_id = a.period_id
+        WHERE a.grain = CAST(:grain AS grain_enum) AND a.entity_key = :ek
+          AND p.period_label = :period
+          AND a.direction = CAST(:direction AS direction_enum)
+    """), {"grain": grain, "ek": entity_key, "period": period,
+           "direction": direction}).first()
+    if not hit:
+        log.warning(
+            f"no alert matches {grain} {entity_key} {period} {direction}. "
+            "The label is stored, but it scores nothing until an alert "
+            "exists at that exact key. Check the grain: an airline row "
+            "needs --grain AIRLINE.")
     session.execute(text("""
         INSERT INTO anomaly_label (grain, entity_key, period_id, direction,
                                    label, basis, source)
@@ -352,6 +375,8 @@ def main() -> None:
     ap.add_argument("--report", action="store_true", help="precision and recall")
     ap.add_argument("--pending", type=int, metavar="N",
                     help="list N unlabelled alerts awaiting review")
+    ap.add_argument("--grain", choices=("AIRPORT", "AIRLINE"), default="AIRPORT",
+                    help="grain of the row being labelled (default AIRPORT)")
     ap.add_argument("--label", nargs=5,
                     metavar=("ENTITY", "PERIOD", "DIRECTION", "GENUINE|SPURIOUS", "REASON"),
                     help="record one human judgement")
@@ -360,15 +385,23 @@ def main() -> None:
     with Session(get_engine()) as s:
         if args.label:
             entity, period, direction, label, reason = args.label
-            record(s, entity, period, direction, label, reason)
-            print(f"recorded {label} for {entity} {period} {direction}")
+            record(s, entity, period, direction, label, reason, grain=args.grain)
+            print(f"recorded {label} for {args.grain} {entity} {period} {direction}")
             return
         if args.pending:
             for r in pending_review(s, args.pending):
                 dev = f"{r['deviation_pct']:+.0f}%" if r["deviation_pct"] is not None else "  n/a"
-                print(f"  {r['entity_key'][:20]:20s} {r['period']:9s} {r['direction']:14s} "
-                      f"{r['method']:16s} observed {r['observed_mt']:>10,.1f} MT  "
+                print(f"  {r['grain']:7s} {r['entity_key'][:20]:20s} {r['period']:9s} "
+                      f"{r['direction']:14s} {r['method']:16s} "
+                      f"observed {r['observed_mt']:>10,.1f} MT  "
                       f"expected {r['expected_mt']:>10,.1f} MT  {dev}")
+                # Printed rather than described, because the grain and the
+                # exact entity key are the two things a person retyping
+                # this gets wrong, and both fail silently.
+                grain_flag = "" if r["grain"] == "AIRPORT" else f" --grain {r['grain']}"
+                print(f"      python -m services.evaluation.anomaly_labels{grain_flag} "
+                      f"--label '{r['entity_key']}' {r['period']} {r['direction']} "
+                      f"SPURIOUS 'why this is not a real cargo event'\n")
             return
         if args.seed or args.replace:
             print(json.dumps(seed(s, replace=args.replace), indent=2))

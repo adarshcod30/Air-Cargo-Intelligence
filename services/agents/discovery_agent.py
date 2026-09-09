@@ -43,8 +43,33 @@ class DiscoveryAgent(Agent):
     # ----------------------------------------------------------- tools --
 
     def _register_tools(self) -> None:
-        @self.tool("fetch_index", "Download the source's index page.", url="page URL")
-        def fetch_index(url: str) -> str:
+        @self.tool(
+            "fetch_index",
+            "Download this source's index page. Takes no arguments: the URL "
+            "comes from the source registry.",
+        )
+        def fetch_index(**supplied: Any) -> str:
+            """The URL is the registry's, never the caller's.
+
+            This tool used to accept a url argument, which invited the model
+            policy to supply one. It supplied "AAI's cargo documents page
+            URL", a description of a URL rather than a URL, and the fetch
+            failed with a connection error that read like the publisher was
+            blocking us. Two runs of the nightly job died that way.
+
+            The source is known when the agent is built, so there was never
+            a question for the model to answer. Letting it choose a fetch
+            target is also the wrong shape of freedom: this project's rule
+            is that the model plans and narrates but does not supply
+            values, and an outbound request to an arbitrary string is a
+            worse thing to hand it than a number.
+            """
+            url = self.source.index_url or ""
+            if not url:
+                raise RuntimeError(f"no index_url registered for {self.source.key}")
+            asked = str(supplied.get("url") or "")
+            if asked and asked != url:
+                log.debug(f"ignoring supplied url {asked!r}; using the registry's")
             res = fetch(url)
             if not res.ok:
                 raise RuntimeError(f"HTTP {res.status}")
@@ -142,8 +167,7 @@ class DiscoveryAgent(Agent):
         done = [c.tool for c in history if c.ok]
 
         if "fetch_index" not in done:
-            return Decision("fetch_index", {"url": self.source.index_url or ""},
-                            "need the index page")
+            return Decision("fetch_index", {}, "need the index page")
         if "extract_links" not in done:
             return Decision("extract_links", {}, "enumerate candidate documents")
 

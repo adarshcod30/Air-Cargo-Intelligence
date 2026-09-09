@@ -76,19 +76,42 @@ def measure_ingestion(session: Session) -> list[Measurement]:
         SELECT count(*) FROM v_cargo_fact WHERE source_document_id IS NULL
     """) or 0
 
+    # Nothing extracted is not nothing reconciled. This measurement reads a
+    # file rather than the warehouse, and any partial run overwrites it, so
+    # a targeted single-source run reported "0.0% (0/0)" as a failure of a
+    # criterion that had simply not been measured. Zero out of zero is not
+    # zero percent, and the difference is the whole point of this table.
+    stale = extracted == 0
+    facts_held = _scalar(session, "SELECT count(*) FROM v_cargo_fact") or 0
+
     return [
-        Measurement("Ingestion", "Rows reconciled without manual mapping", "≥ 95%",
-                    f"{rate:.1f}% ({reconciled:,}/{extracted:,})", rate >= 95),
+        Measurement(
+            "Ingestion", "Rows reconciled without manual mapping", "≥ 95%",
+            "not measured (last report is empty)" if stale
+            else f"{rate:.1f}% ({reconciled:,}/{extracted:,})",
+            None if stale else rate >= 95,
+            (f"the warehouse holds {facts_held:,} facts, so this is a missing "
+             f"report rather than a failed pipeline. Re-run "
+             f"`python -m services.agents.orchestrator --all` to regenerate it")
+            if stale else ""),
         # Extraction rate was the wrong thing to measure: most of the
         # gap is documents the pipeline correctly refused - OGD datasets
         # with no cargo column, or a title naming no carrier. Refusing
         # those is the designed behaviour, so counting them as failures
         # measures the opposite of what it should. What matters is that
         # nothing is dropped silently.
-        Measurement("Ingestion", "Documents either extracted or refused with a reason",
-                    "100%", f"100% ({docs_found}/{docs_found})", True,
-                    f"{docs_ok} extracted, {docs_found - docs_ok} refused, "
-                    "each with a recorded reason in the run trace"),
+        Measurement(
+            "Ingestion", "Documents either extracted or refused with a reason", "100%",
+            # 100% of nothing is not a pass. The same empty report that made
+            # reconciliation read 0% made this one read 100%, which is the
+            # more dangerous direction: a criterion that reports success
+            # when it has measured nothing at all.
+            "not measured (last report is empty)" if not docs_found
+            else f"100% ({docs_found}/{docs_found})",
+            None if not docs_found else True,
+            "" if not docs_found else
+            f"{docs_ok} extracted, {docs_found - docs_ok} refused, "
+            "each with a recorded reason in the run trace"),
         Measurement("Ingestion", "INTL + DOM = TOTAL, recomputed from stored rows",
                     "≥ 99%", f"{cross_rate:.1f}% ({cross_ok:,}/{cross_total:,})",
                     cross_rate >= 99),

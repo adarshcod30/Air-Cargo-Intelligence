@@ -13,6 +13,7 @@ agent quarantines instead of feeding garbage downstream.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from services.agents.base import Agent, Decision
@@ -46,6 +47,22 @@ class ExtractionAgent(Agent):
         @self.tool("fetch_document", "Download the document and archive the raw bytes.")
         def fetch_document() -> str:
             doc: SourceDocument = self.context["document"]
+
+            # Bytes already on disk are the bytes to use. Re-extraction
+            # exists to replay a parser over the corpus, and re-fetching
+            # defeats it twice over: it puts avoidable load on publishers
+            # who rate limit, and the archived URL for an API source has
+            # its key redacted, so the request comes back as a 149-byte
+            # error page that no parser will claim.
+            cached = Path(doc.raw_path) if doc.raw_path else None
+            if cached is not None and cached.exists():
+                payload = cached.read_bytes()
+                self.context["payload"] = payload
+                self.context["fetch_warnings"] = []
+                doc.status = DocStatus.FETCHED
+                return (f"{len(payload)} bytes from the raw store, "
+                        f"{doc.media_type or sniff_media_type(payload)}")
+
             res = fetch(doc.source_url)
             if res.rate_limited:
                 # Not this document's fault, and not fixable by trying

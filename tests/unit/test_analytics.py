@@ -674,3 +674,146 @@ class TestTokenAccounting:
         run.usage = {"input_tokens": 120, "output_tokens": 30}
         row, _ = _row_from_dict(run.finish(True, "ok").to_dict(), "trace-1")
         assert (row.input_tokens, row.output_tokens) == (120, 30)
+
+
+class TestDiscoveryFetchTarget:
+    """The registry owns the URL. The model was being asked for it."""
+
+    def _agent(self, monkeypatch):
+        from services.agents import discovery_agent as da
+        from services.ingestion.registry import REGISTRY
+
+        seen = {}
+
+        class Res:
+            ok, status, size, media_type = True, 200, 11, "text/html"
+            payload = b"<html></html>"
+
+        monkeypatch.setattr(da, "fetch", lambda url, *a, **kw: (seen.update(url=url), Res())[1])
+        src = next(s for s in REGISTRY if s.index_url)
+        return da.DiscoveryAgent(src), seen, src
+
+    def test_a_url_supplied_by_the_policy_is_ignored(self, monkeypatch):
+        """It supplied "AAI's cargo documents page URL", a description.
+
+        The fetch failed with a connection error that read like the
+        publisher blocking us, and two nightly runs died that way.
+        """
+        agent, seen, src = self._agent(monkeypatch)
+        agent.tools["fetch_index"](url="AAI's cargo documents page URL")
+        assert seen["url"] == src.index_url
+
+    def test_the_tool_advertises_no_arguments(self, monkeypatch):
+        """A parameter the model can see is a parameter it will fill in."""
+        agent, _, _ = self._agent(monkeypatch)
+        assert agent.tools["fetch_index"].params == {}
+
+
+class TestEmptyReportIsNotAResult:
+    """Zero out of zero is not a percentage, in either direction."""
+
+    def _measure(self, monkeypatch, tmp_path, report):
+        import json as _json
+        from types import SimpleNamespace
+
+        from services.evaluation import acceptance
+
+        (tmp_path / "pipeline_report.json").write_text(_json.dumps(report))
+        monkeypatch.setattr(acceptance, "SETTINGS",
+                            SimpleNamespace(processed_dir=str(tmp_path)))
+        monkeypatch.setattr(acceptance, "_scalar", lambda *a, **k: 0)
+
+        # measure_ingestion recomputes the component identity from stored
+        # rows as well as reading the report, so it needs a session that
+        # answers rather than a None.
+        class Session:
+            def execute(self, *a, **k):
+                class R:
+                    def one(self):
+                        return (0, 0)
+                return R()
+
+        return {m.metric: m for m in acceptance.measure_ingestion(Session())}
+
+    def test_an_empty_report_does_not_read_as_a_failed_pipeline(self, monkeypatch, tmp_path):
+        """A single-source run overwrote the report and the table said 0.0%.
+
+        The warehouse still held every fact. What was missing was the
+        measurement, not the data.
+        """
+        m = self._measure(monkeypatch, tmp_path, {})["Rows reconciled without manual mapping"]
+        assert m.passes is None
+        assert "not measured" in m.measured
+
+    def test_an_empty_report_does_not_read_as_a_pass_either(self, monkeypatch, tmp_path):
+        """The more dangerous direction: success claimed over nothing."""
+        m = self._measure(monkeypatch, tmp_path,
+                          {})["Documents either extracted or refused with a reason"]
+        assert m.passes is None
+
+    def test_a_real_report_still_measures(self, monkeypatch, tmp_path):
+        m = self._measure(monkeypatch, tmp_path, {
+            "facts_extracted": 100, "facts_reconciled": 99,
+            "documents_discovered": 10, "documents_extracted": 8,
+        })["Rows reconciled without manual mapping"]
+        assert m.passes is True and "99.0%" in m.measured
+
+
+class TestReextraction:
+    """Replaying the corpus must not depend on the network."""
+
+    def test_cached_bytes_are_preferred_over_a_refetch(self, monkeypatch, tmp_path):
+        """Two reasons, and the second is why re-extraction returned nothing.
+
+        Re-fetching puts avoidable load on publishers that rate limit. And
+        an archived API URL has its key redacted before it is written to
+        the ledger, so the replayed request came back as a 149-byte error
+        page that no parser would claim. Three of three documents
+        quarantined, with the corpus sitting on disk.
+        """
+        from services.agents import extraction_agent as ea
+        from services.common.models import Publisher, SourceDocument
+
+        raw = tmp_path / "doc.json"
+        raw.write_bytes(b'{"records": []}')
+
+        def explode(*a, **k):
+            raise AssertionError("re-extraction must not reach the network")
+
+        monkeypatch.setattr(ea, "fetch", explode)
+        agent = ea.ExtractionAgent(store=object())
+        doc = SourceDocument(
+            publisher=Publisher.DATA_GOV_IN,
+            source_url="https://api.example.test/x?api-key=<redacted>",
+            raw_path=str(raw), media_type="application/json",
+        )
+        agent.context["document"] = doc
+        out = agent.tools["fetch_document"]()
+
+        assert "raw store" in out
+        assert agent.context["payload"] == b'{"records": []}'
+
+    def test_a_missing_cache_still_falls_back_to_the_network(self, monkeypatch, tmp_path):
+        """A document fetched but never archived is still fetchable."""
+        from services.agents import extraction_agent as ea
+        from services.common.models import Publisher, SourceDocument
+
+        class Res:
+            ok, rate_limited, status = True, False, 200
+            payload, media_type, sha256, size = b"x", "text/html", "abc", 1
+            warnings: list = []
+
+        called = {}
+        monkeypatch.setattr(ea, "fetch", lambda u, *a, **k: (called.update(u=u), Res())[1])
+
+        class Store:
+            def archive(self, *a, **k):
+                return None
+
+        agent = ea.ExtractionAgent(store=Store())
+        agent.context["document"] = SourceDocument(
+            publisher=Publisher.DATA_GOV_IN, source_url="https://example.test/y",
+            raw_path=str(tmp_path / "absent.pdf"),
+        )
+        agent.tools["fetch_document"]()
+        assert called["u"] == "https://example.test/y"
