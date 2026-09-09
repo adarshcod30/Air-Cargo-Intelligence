@@ -13,6 +13,13 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aci_readonly') THEN
+        -- No password here on purpose: this file is applied to real
+        -- deployments and a credential in the repository is a credential in
+        -- everyone's clone. Set one per environment afterwards:
+        --     ALTER ROLE aci_readonly WITH LOGIN PASSWORD '<from your secret store>';
+        -- A null password authenticates only where the server trusts the
+        -- connection, which is true of a local unix socket and false of
+        -- essentially every managed instance.
         CREATE ROLE aci_readonly LOGIN PASSWORD NULL;
     END IF;
 END $$;

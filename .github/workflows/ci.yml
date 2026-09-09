@@ -62,10 +62,19 @@ jobs:
           alembic upgrade head
           psql -h localhost -U cargo -d air_cargo -f db/views.sql
           psql -h localhost -U cargo -d air_cargo -f db/readonly_role.sql
+          # The role is created without a password, which is fine where
+          # Postgres trusts local connections and impossible where it does
+          # not. This runner authenticates over TCP with scram-sha-256, so
+          # a null-password role cannot connect at all. The password is set
+          # here rather than in db/readonly_role.sql because that file is
+          # applied to real deployments, where the secret belongs to the
+          # environment and not to the repository.
+          psql -h localhost -U cargo -d air_cargo \
+            -c "ALTER ROLE aci_readonly WITH LOGIN PASSWORD 'ci_only_readonly';"
 
       - name: Test
         env:
-          DATABASE_URL_READONLY: postgresql+psycopg://aci_readonly@localhost:5432/air_cargo
+          DATABASE_URL_READONLY: postgresql+psycopg://aci_readonly:ci_only_readonly@localhost:5432/air_cargo
         run: pytest -q --cov=services --cov-report=term-missing
 
       - name: Parser fixtures must still parse
