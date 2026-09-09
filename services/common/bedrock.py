@@ -207,12 +207,35 @@ class BedrockClient:
             self._last_error = str(exc)
             raise BedrockUnavailable(str(exc)) from exc
 
-    def embed_many(self, texts: list[str], dimensions: int = 1024) -> list[list[float]]:
-        """Titan has no batch endpoint; sequential with per-item failure."""
-        out: list[list[float]] = []
-        for t in texts:
-            out.append(self.embed(t, dimensions=dimensions))
-        return out
+    def embed_many(
+        self, texts: list[str], dimensions: int = 1024, workers: int = 8
+    ) -> list[list[float]]:
+        """Embed a batch, concurrently.
+
+        Titan exposes no batch endpoint, so a corpus of this size is 1,410
+        separate round trips. Done sequentially that is dominated entirely
+        by latency rather than by any work either side is doing. A small
+        pool cuts the rebuild from minutes to under one, and stays well
+        inside the per-account request rate.
+
+        Order is preserved: results are placed by index, not appended, so a
+        chunk cannot be stored against another chunk's vector.
+        """
+        if not texts:
+            return []
+        if len(texts) == 1 or workers <= 1:
+            return [self.embed(t, dimensions=dimensions) for t in texts]
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        out: list[list[float] | None] = [None] * len(texts)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(self.embed, t, dimensions): i for i, t in enumerate(texts)
+            }
+            for fut, i in futures.items():
+                out[i] = fut.result()
+        return [v for v in out if v is not None]
 
 
 _default: BedrockClient | None = None

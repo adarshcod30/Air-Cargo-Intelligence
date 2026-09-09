@@ -172,6 +172,28 @@ class InsightAgent(Agent):
         "0 rejected" is a measurement rather than an assumption.
         """
         a = item["anomaly"]
+        # The model is shown tonnes and checked against tonnes. It used to be
+        # shown kilograms and checked against the tonne conversion, so a
+        # narrative that quoted its evidence exactly was rejected as
+        # ungrounded - all 25 of them. Widening the check to accept either
+        # unit would have hidden the mismatch and let a genuine unit error
+        # through; presenting one unit removes the disagreement instead.
+        evidence = {
+            "airport_or_airline": a.get("entity_name") or a.get("entity_key"),
+            "period": a.get("period"),
+            "direction": a.get("direction"),
+            "observed_mt": None if a.get("observed_kg") is None
+            else round(float(a["observed_kg"]) / 1000, 1),
+            "expected_mt": None if a.get("expected_kg") is None
+            else round(float(a["expected_kg"]) / 1000, 1),
+            "deviation_pct": None if a.get("deviation_pct") is None
+            else round(float(a["deviation_pct"]), 1),
+            "severity": a.get("severity"),
+            "units": "all tonnages are metric tonnes (MT)",
+        }
+        series_mt = [
+            {"period": r["period"], "mt": round(float(r["mt"]), 1)} for r in item["series"]
+        ]
         prompt = (
             "Explain this detected air-cargo anomaly in two or three plain "
             "sentences for a logistics analyst.\n\n"
@@ -181,8 +203,10 @@ class InsightAgent(Agent):
             "- Do not speculate about causes you cannot see in the data. If "
             "the cause is not evident, say the movement is unexplained.\n"
             "- Do not repeat the figures more precisely than they are given.\n\n"
-            f"ANOMALY: {json.dumps(_jsonable(a), indent=2)}\n\n"
-            f"SURROUNDING SERIES: {json.dumps(_jsonable(item['series']), indent=2)}\n"
+            "- Every tonnage below is already in metric tonnes. Quote them "
+            "as given; do not convert to kilograms.\n\n"
+            f"ANOMALY: {json.dumps(_jsonable(evidence), indent=2)}\n\n"
+            f"SURROUNDING SERIES: {json.dumps(_jsonable(series_mt), indent=2)}\n"
         )
         try:
             return get_client().converse(

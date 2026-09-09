@@ -136,6 +136,13 @@ class BedrockPolicy:
             return self._fall_back("bad-output", goal, tools, history, context)
 
         tool_name = parsed.get("tool")
+        # Models asked for JSON frequently emit the string "null" instead of
+        # a null literal. Read as a tool name it is never valid, so the loop
+        # spent two steps rejecting a decision that meant "stop".
+        if isinstance(tool_name, str) and tool_name.strip().lower() in {
+            "null", "none", "stop", "finish", "done", ""
+        }:
+            tool_name = None
         if tool_name is not None and tool_name not in tools:
             # Reject rather than trust. The loop turns this into a
             # corrective observation and the model gets another turn.

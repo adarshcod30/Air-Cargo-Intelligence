@@ -186,10 +186,28 @@ class Agent:
 
     @staticmethod
     def _describe(result: Any) -> str:
+        """Render a tool result as the observation the policy will read.
+
+        Lists used to collapse to "N item(s)". That is adequate for the
+        heuristic policy, which reads the real value out of context, and
+        useless for a model policy, which sees only this string: a
+        `rank_parsers` call returning ['aai_freight_annex4'] arrived as
+        "1 item(s)", so the model had no way to learn the parser's name and
+        could only invent one. Every model run failed on that alone.
+
+        The contents are the observation. A count is a description of the
+        observation, which is not the same thing.
+        """
         if result is None:
             return "none"
         if isinstance(result, (list, tuple, set)):
-            return f"{len(result)} item(s)"
+            items = list(result)
+            if not items:
+                return "0 items: []"
+            head = json.dumps(items[:12], default=str)
+            if len(items) <= 12:
+                return f"{len(items)} item(s): {head}"[:600]
+            return f"{len(items)} item(s), first 12: {head}"[:600]
         if isinstance(result, dict):
-            return json.dumps(result, default=str)[:200]
-        return str(result)[:200]
+            return json.dumps(result, default=str)[:400]
+        return str(result)[:400]

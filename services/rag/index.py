@@ -105,13 +105,22 @@ def build(limit: int | None = None, rebuild: bool = False) -> dict:
         # -- pass 2: embed and store ---------------------------------------
         seen_sha: set[str] = set()
         for sid, chunks in staged:
+            # Deduplicate before embedding, not after: a repeated passage
+            # costs a network round trip that produces a vector we then
+            # discard, and the open-data corpus repeats a lot.
+            fresh = []
             for c in chunks:
                 sha = hashlib.md5(c.content.encode()).hexdigest()[:32]
                 if sha in seen_sha:
                     duplicates += 1
                     continue
                 seen_sha.add(sha)
-                vec = embedder.embed(c.content)
+                fresh.append((c, sha))
+            if not fresh:
+                continue
+
+            vectors = embedder.embed_batch([c.content for c, _ in fresh])
+            for (c, sha), vec in zip(fresh, vectors):
                 # pgvector accepts its own literal form; the portable
                 # fallback stores the same JSON array as text, so one
                 # code path writes both and the retriever reads either.

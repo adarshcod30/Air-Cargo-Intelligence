@@ -131,6 +131,17 @@ class Embedder:
     def managed(self) -> bool:
         return self.model != HASHED_MODEL
 
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed several passages at once, preserving order."""
+        if not self.managed:
+            return [embed_hashed(t, idf=self.idf) for t in texts]
+        try:
+            return self._client.embed_many(texts, dimensions=DIMS)
+        except BedrockUnavailable as exc:
+            log.warning(f"managed embeddings failed ({exc}); switching to {HASHED_MODEL}")
+            self.model = HASHED_MODEL
+            return [embed_hashed(t, idf=self.idf) for t in texts]
+
     def embed(self, text: str) -> list[float]:
         if not self.managed:
             return embed_hashed(text, idf=self.idf)
