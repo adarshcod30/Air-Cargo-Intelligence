@@ -127,6 +127,17 @@ def build(session: Session, period: str | None = None) -> Brief:
 
 # ------------------------------------------------------------- rendering --
 
+
+def _clip(name: str, width: int = 26) -> str:
+    """Truncate with an ellipsis, so a cut name does not read as a typo.
+
+    A hard slice rendered "Indira Gandhi Internationa", which looks like a
+    spelling mistake rather than a label that did not fit. The character
+    tells the reader something was removed.
+    """
+    return name if len(name) <= width else name[: width - 1].rstrip() + "\u2026"
+
+
 def _bar_chart(rows: list[dict], label_key: str, value_key: str,
                width: int = 640, bar_h: int = 22) -> str:
     """A self-contained SVG bar chart.
@@ -150,7 +161,7 @@ def _bar_chart(rows: list[dict], label_key: str, value_key: str,
         bar_w = max(2, (value / peak) * (width - label_w - 90))
         parts.append(
             f'<text x="0" y="{y + bar_h * 0.7:.0f}" font-size="12" fill="#444">'
-            f'{html.escape(str(r[label_key])[:26])}</text>'
+            f'{html.escape(_clip(str(r[label_key])))}</text>'
             f'<rect x="{label_w}" y="{y}" width="{bar_w:.0f}" height="{bar_h}" '
             f'rx="3" fill="#1a56db"/>'
             f'<text x="{label_w + bar_w + 6:.0f}" y="{y + bar_h * 0.7:.0f}" '

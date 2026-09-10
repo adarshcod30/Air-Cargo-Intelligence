@@ -268,7 +268,12 @@ a.btn { text-decoration: none; color: var(--ink-2); }
   background: var(--indigo-dim); color: var(--indigo); padding: 3px 7px; border-radius: 5px;
 }
 .row .name { min-width: 0; }
-.row .name-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* display:block matters. text-overflow has no effect on an inline
+   element, so this rule looked right and did nothing: seven of the ten
+   airport names ran across the tonnage column instead of truncating. */
+.row .name-main {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .row .num { font-family: var(--mono); text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
 .row .delta { font-family: var(--mono); font-size: 12.5px; text-align: right; min-width: 66px; font-weight: 600; }
 .delta.up { color: var(--teal); } .delta.down { color: var(--rose); }

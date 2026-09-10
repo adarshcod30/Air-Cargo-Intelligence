@@ -1242,6 +1242,6 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
 
 **Adarsh Dwivedi**, [@adarshcod30](https://github.com/adarshcod30) · 23ucs509@lnmiit.ac.in
 
-Built with Anish Laddha, Hiitesh Gour, and Charu Chhabra at The LNM Institute of Information Technology, Jaipur.
+Built at The LNM Institute of Information Technology, Jaipur.
 
 Project link: [https://github.com/adarshcod30/Air-Cargo-Intelligence](https://github.com/adarshcod30/Air-Cargo-Intelligence)
