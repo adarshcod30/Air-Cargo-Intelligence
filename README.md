@@ -103,7 +103,23 @@ not import is a claim a reader cannot check.
 
 ## System Architecture
 
-The system is four layers stacked bottom-up. **Ingestion** treats every external source as unreliable: it downloads, checksums, and archives the raw artefact before parsing, so a re-parse never requires re-fetching. **The warehouse** is the single source of truth, a star schema where every fact row carries a foreign key to the source document that produced it. **The agent pipeline** reads from and writes back to that warehouse, enriching it with trends, anomalies, forecasts, and narratives. **The serving layer** exposes all of it through a REST API that both the dashboard and the chat interface consume, so there is exactly one implementation of every metric.
+Four layers, stacked bottom-up. Each one assumes the layer below it is
+lying until proven otherwise.
+
+**Ingestion** treats every external source as unreliable. It downloads,
+checksums and archives the raw artefact before parsing a byte of it, so a
+re-parse never means re-fetching.
+
+**The warehouse** is the single source of truth. A star schema, where every
+fact row carries a foreign key to the document that produced it. Not by
+convention: by a NOT NULL constraint.
+
+**The agent pipeline** reads that warehouse and writes back to it, adding
+trends, anomalies, forecasts and narratives.
+
+**The serving layer** puts all of it behind one REST API. The dashboard and
+the chat interface both consume that API, which is why there is exactly one
+implementation of every metric rather than one per consumer.
 
 ```mermaid
 flowchart TD
@@ -424,7 +440,11 @@ Every fetch is checksummed and archived to `data/raw/` before parsing, so parser
 - **Airport identity.** Canonicalise IATA / ICAO / free-text city names against a curated `dim_airport` crosswalk; unresolved names are quarantined for manual mapping rather than silently dropped.
 - **Units.** Detect and normalise kg / MT / tonnes to kilograms. Where a source is ambiguous, magnitude heuristics against the airport's historical range flag it for review.
 - **Periods.** Convert Indian fiscal-year reporting (April-March) to calendar months so sources are comparable.
-- **Deduplication.** Overlapping reports are resolved by the natural key `(grain, period, airport, airline, direction, publisher, measure)`, enforced by a unique constraint declared `NULLS NOT DISTINCT`. Postgres treats NULLs as distinct by default, so without that clause a null `airline_id` would let the same airport month be inserted twice, which is exactly how `BENGALURU (BIAL)` and Frankfurt were double-counted before it was added. A republished month overwrites rather than appends, so a correction fully supersedes the original.
+- **Deduplication.** Overlapping reports resolve on the natural key `(grain, period, airport, airline, direction, publisher, measure)`, enforced by a unique constraint declared `NULLS NOT DISTINCT`.
+
+  That clause is doing real work. Postgres treats NULLs as distinct by default, so without it a null `airline_id` lets the same airport month in twice. That is exactly how `BENGALURU (BIAL)` and Frankfurt came to be double-counted before it was added.
+
+  A republished month overwrites rather than appends, so a correction fully supersedes the original.
 - **Validation.** Great Expectations-style assertions gate the load: non-negative tonnage, referential integrity, and period-over-period change within a plausible band.
 
 ### 3. Transformation & feature engineering
@@ -444,12 +464,14 @@ Engineered for the forecast and anomaly models:
 | Forecast | Naive (last value) | Drift, recent-mean, seasonal-naive, SARIMA (statsmodels) | Lowest MAPE under rolling-origin backtest, scored per candidate on the history it can actually use: SARIMA needs a season plus two, naive needs two, and judging them on a common minimum silently excluded the cheap models from short series |
 | Anomaly | Fixed ±2σ threshold | STL residual z-score, robust (median/MAD) z-score, the consensus of the two, and a structural detector for zero-to-traffic transitions | Mean and standard deviation are themselves moved by the outlier being looked for; median and MAD are not. Guards on baseline size, non-zero fraction and median-to-max ratio stop a launch curve reading as growth |
 
-Splitting is strictly **time-based**: a random split would leak future information into training and produce forecast scores that cannot survive contact with production. There is no hyperparameter search: with 79 reporting periods and series often under 20 points, tuning would fit the backtest rather than the data, so the candidate set is small and fixed and the backtest only chooses between members of it.
+Splitting is strictly **time-based**. A random split leaks the future into training and produces forecast scores that cannot survive contact with production.
+
+There is no hyperparameter search, and that is deliberate. With 79 reporting periods and series often under 20 points, tuning would fit the backtest rather than the data. So the candidate set stays small and fixed, and the backtest only picks between members of it.
 
 ### 5. Evaluation
 
 - **Forecast:** MAPE and sMAPE as headline metrics, RMSE for scale sensitivity, and prediction-interval coverage to confirm the intervals mean what they claim.
-- **Anomaly:** recall against the `anomaly_label` set, reported alongside how many labels it rests on and how many came from a person. Precision is reported as *not measurable* rather than estimated, since a false positive requires a human to assert an alert was spurious. See [the labelled set](#the-labelled-set-behind-the-alert-metrics).
+- **Anomaly:** precision and recall against the `anomaly_label` set, each reported with how many labels it rests on and how many came from a person. Both matter: a precision of 1.00 over nine rule-derived labels is a far weaker claim than 0.83 over twenty-eight reviewed ones. See [the labelled set](#the-labelled-set-behind-the-alert-metrics).
 - **Chat:** exact-match accuracy on a fixed question bank with known answers, plus **citation validity**, the share of numeric claims that resolve to a real source row. This is the gate that keeps the assistant honest.
 
 ---
@@ -500,14 +522,17 @@ latency.** So the heuristic stays the default and the model stays the
 escalation path for documents whose shape the rules do not anticipate,
 which is now a measured conclusion rather than an assumption.
 
-The harness earned its place on its first real run by failing every model
-attempt for a reason that was not the model. `Agent._describe` rendered any
-list as `"N item(s)"`, so `rank_parsers` returning `['aai_freight_annex4']`
-reached the policy as the string `"1 item(s)"`. The heuristic never noticed
-because it reads the value out of context; a model sees only the
-observation, so it could not learn the parser's name and invented one. A
-framework defect that only one of two policies could ever expose, in a
-project where that policy had never run.
+The harness earned its keep on its first real run, by failing every model
+attempt for a reason that had nothing to do with the model.
+
+`Agent._describe` rendered any list as `"N item(s)"`. So `rank_parsers`
+returning `['aai_freight_annex4']` reached the policy as the string
+`"1 item(s)"`. The parser's name was simply gone.
+
+The heuristic never noticed, because it reads the value straight out of
+context. A model sees only the observation, so it could not learn the name
+and invented one instead. A framework defect that only one of two policies
+could ever expose, sitting in a project where that policy had never run.
 
 ### Retrieval
 
@@ -523,13 +548,17 @@ The one miss is real rather than an absent entity: `hyderabad` appears in
 
 ### Narration
 
-25 anomalies narrated by the model, **0 rejected as ungrounded**. Getting
-there required fixing the check rather than the model: the prompt showed
-kilograms while the check allowed only the tonne conversion, so a narrative
-quoting its evidence exactly was rejected: all 25 rejections were false.
-Widening the check to accept either unit would have hidden the mismatch and
-let a genuine unit error through, so the prompt is denominated in tonnes to
-match the check instead.
+25 anomalies narrated by the model, **0 rejected as ungrounded**.
+
+That number started at 25 rejections out of 25, and the model was innocent
+of all of them. The prompt showed kilograms. The check accepted only the
+tonne conversion. So a narrative quoting its evidence exactly, to the digit,
+failed the grounding test.
+
+The tempting fix is to accept either unit. That would have hidden the
+mismatch and let a real unit error through the same gap. The prompt is
+denominated in tonnes instead, so the two sides agree rather than the check
+learning to shrug.
 
 ---
 
@@ -614,50 +643,65 @@ alongside the empty count so a reader can tell the rule ran. The
 consequence is that no rule can supply a false positive here, and a better
 rule would not change that.
 
-Seeding this set is what exposed the real defect: **the detector found 0 of
-41 unarguable transitions.** Both z-score detectors measure distance from a
-series' own past, and a service that has just begun has none, so the one
-class of event an operations team most wants named was structurally
-invisible. A `service_started` / `service_stopped` detector now covers it,
-and these events outrank ordinary fluctuations in the feed, including in
-the API's ordering, which sorted on `abs(deviation_pct)` and so sent the
-one class with no deviation percentage to the bottom of the list.
+Seeding the set exposed the real defect. **The detector found 0 of 41
+unarguable transitions.**
 
-The two transitions are defined symmetrically: each names the month at the
-boundary that **carries traffic**: the first for a start, the last for a
-stop. Without that, a shutdown fired twice, once on the last trading month
-and again on the first silent one, and the second alert described a month
-in which nothing happened.
+The reason is structural, not a tuning miss. Both z-score detectors measure
+distance from a series' own past. A service that has just begun has no past.
+So the one class of event an operations team most wants named was invisible
+by construction.
+
+A `service_started` / `service_stopped` detector now covers it, and these
+events outrank ordinary fluctuations. That ranking had to be fixed twice.
+The API sorted on `abs(deviation_pct)`, which sent the one class with no
+deviation percentage straight to the bottom of the response.
+
+Both transitions are defined symmetrically. Each names the boundary month
+that **carries traffic**, so the first for a start and the last for a stop.
+
+Without that symmetry a shutdown fired twice. Once on the last trading
+month, then again on the first silent one, where the second alert described
+a month in which nothing had happened.
 
 The rule and the detector are deliberately **separate implementations** of
-one definition. Sharing code would make recall tautological (the detector
-scored against its own output), which is precisely why a genuine 0/41 was
-possible. A test asserts the two agree, so they cannot drift apart silently.
+one definition. Share the code and recall becomes tautological, since the
+detector would be scored against its own output.
+
+That separation is what made a genuine 0 of 41 possible in the first place.
+A test asserts the two still agree, so they cannot drift apart quietly.
 
 **Precision is now measured at 0.83**, over five hand-labelled spurious
 alerts and twenty-three genuine ones. Getting there meant labelling by
 hand, and the labelling found two detector defects that an unmeasured row
 had been hiding.
 
-The first was the decomposition. Kolkata's domestic freight had three
-complete seasonal cycles, and STL gives each calendar month a sub-series of
-one point per cycle. A LOESS fit through three points interpolates rather
-than fits: it passes exactly through the first and last, so those get a
-residual of zero and the middle point carries the whole error. Kolkata's
-May seasonal component read +293, -818, -671, +2213 across four years,
-calling May below normal in the two years May was the annual peak, and both
-middle Mays were reported as anomalies. Measured over synthetic series with
+The first was the decomposition, and it was interpolating rather than
+fitting.
+
+STL gives each calendar month a sub-series of one point per cycle. Kolkata's
+domestic freight had three cycles, so three points. A LOESS fit through
+three points passes exactly through the first and the last, which leaves
+them a residual of zero and dumps the entire error on the middle one.
+
+You can see it in the numbers. Kolkata's May seasonal component read +293,
+-818, -671, +2213 across four years. It called May below normal in the two
+years May was the annual peak, and reported both of those Mays as
+anomalies. Measured over synthetic series with
 known seasonality, the share of sub-series endpoints landing within 1% of
 zero residual runs 67% at two cycles, 99% at three, 37% at four and 5% at
 five. The requirement moved from two cycles to five.
 
-The second was the baseline. The robust z-score compared every month
-against the median of the entire series, so an airport that had grown was
-measured against its own smaller past. That baseline is now a trailing
-twelve-month window. The fix immediately proved one of my own labels wrong:
-Chandigarh still scored 7.8 against a *recent* baseline, and every month
-from April 2026 exceeds the entire prior maximum, so it is a real level
-shift and the label was corrected from spurious to genuine.
+The second was the baseline, and it was simply out of date. The robust
+z-score compared every month against the median of the whole series, so an
+airport that had grown was scored against its own smaller past. It now uses
+a trailing twelve-month window.
+
+That fix promptly disproved one of my own labels. I had called Chandigarh a
+stale-baseline artefact. It still scored 7.8 against a *recent* baseline,
+and every month from April 2026 exceeds the entire prior maximum, so the
+airport had genuinely stepped up. The label was corrected from spurious to
+genuine, and the metric improving was the consequence rather than the
+motive.
 
 The two false positives that remain are both cases the detector cannot see
 from the series alone, because the publisher contradicted its own figure
@@ -717,14 +761,16 @@ the same claim as 1.00 over two hundred reviewed ones.
 Neon Postgres, both in `us-east-1`. Two properties of the design make that
 possible, and neither was added for the deployment:
 
-- The API imports no analytics. Forecasts, trends and anomalies are
-  computed by the scheduled pipeline and read back as rows, so the serving
-  bundle needs neither `statsmodels` nor `scipy`: together those exceed
-  the serverless size limit outright. `pyproject.toml` is the single
-  declaration, with the parsing and forecasting dependencies behind
-  `[ingest]` and `[analytics]` extras the function never installs. There
-  is no `requirements.txt`: having both meant the builder read one and the
-  developer read the other, which is how `fastapi` came to be undeclared.
+- **The API imports no analytics.** Forecasts, trends and anomalies are
+  computed by the scheduled pipeline and read back as rows. So the serving
+  bundle needs neither `statsmodels` nor `scipy`, which together blow the
+  serverless size limit on their own.
+
+  `pyproject.toml` is the single dependency declaration, with parsing and
+  forecasting behind `[ingest]` and `[analytics]` extras the function never
+  installs. There is deliberately no `requirements.txt`. Having both meant
+  the builder read one file and the developer read the other, which is how
+  `fastapi` came to be undeclared in the first place.
 - The serving role holds `SELECT` on views and nothing else, so exposing
   the database to a function that the public can reach does not widen what
   that function can read.
@@ -757,15 +803,21 @@ accumulated it, `requirements.txt` named it correctly, and the builder reads
 `pyproject.toml` in preference. Both had been latent since the project
 started; neither is reachable from a developer machine.
 
-A third only appeared once the pipeline ran unattended. Discovery's
-`fetch_index` tool took a `url` argument, so the model policy supplied
-one: `"AAI's cargo documents page URL"`, a description of a URL rather
-than a URL. The fetch could not connect and the error read like the
-publisher blocking a hosted runner, which is what it was first diagnosed
-as. The source is known when the agent is constructed, so there was never
-a question for the model to answer, and an outbound request to an
-arbitrary string is a worse thing to hand it than a number. The tool now
-advertises no arguments and reads the registry.
+A third surfaced only once the pipeline ran unattended, and it is my
+favourite of the three.
+
+Discovery's `fetch_index` tool took a `url` argument. So the model policy
+supplied one: `"AAI's cargo documents page URL"`. A description of a URL,
+rather than a URL.
+
+The fetch could not connect, and the resulting error looked exactly like a
+publisher blocking a hosted runner. That is what I first diagnosed it as,
+and I was wrong.
+
+The tool now takes no arguments and reads the registry. The source is known
+when the agent is constructed, so there was never a question for the model
+to answer, and an outbound request to an arbitrary string is a worse thing
+to hand a model than a number.
 
 - **Local run:** PostgreSQL plus a Python virtualenv. No containers: the
   stack is one database and one process, and a container layer would add
@@ -808,15 +860,17 @@ advertises no arguments and reads the registry.
 - **Monitoring:** `/metrics` exposes fact counts, source staleness and
   whether the last scheduled run succeeded. `/api/v1/pipeline/state`
   returns the last run stage by stage.
-- **Security:** the serving path connects as `aci_readonly`, which holds
-  `SELECT` on eleven views and no rights at all on the tables beneath them.
-  Retrieval reads through `v_document_chunk` and `v_rag_vocab` for the same
-  reason: when it was first wired up it queried the base tables directly
-  and the role refused it, which is the confinement working rather than a
-  bug in it.
-  A test fails if any module under `api/`, `semantic/` or `reporting/`
-  names a base table, because such a query works for the owner and fails
-  only in production.
+- **Security:** the serving path connects as `aci_readonly`. That role holds
+  `SELECT` on eleven views and no rights whatsoever on the tables beneath
+  them.
+
+  Retrieval goes through `v_document_chunk` and `v_rag_vocab` for the same
+  reason. When it was first wired up it queried the base tables directly and
+  the role refused it. That was the confinement working, not a bug in it.
+
+  A test fails if any module under `api/`, `semantic/` or `reporting/` names
+  a base table. Such a query works fine for the owner and fails only in
+  production, which is the worst possible place to find out.
 - **Secrets:** environment only, never committed. Credentials are also
   redacted from logs, the provenance ledger and agent traces, since one
   publisher takes its key as a query parameter and a URL is therefore
@@ -1147,15 +1201,18 @@ ruff check services tests
 The suite is ordered by bugs-caught-per-effort, and every case in it comes
 from a failure actually observed against live data:
 
-- **Documentation tests**: this README is checked against the code. One
-  test fails if it names a library the codebase does not have, which it did
-  for five of them at one point. Another fails on any em or en dash, since
-  house style forbids them and a standing instruction nobody enforces is a
-  suggestion. Two more compare every figure in the acceptance table against
-  `data/processed/acceptance.json`, and caught this table claiming 198
-  documents where the measurement said 261. Those two skip in CI by design:
-  the measured figures are derived data, not version controlled, and CI
-  seeds a small warehouse whose numbers would not match.
+- **Documentation tests**: this README is checked against the code, because
+  prose can say anything and a test cannot.
+
+  One fails if the README or SRS names a library the codebase does not have.
+  It would have failed for five of them at once. Another fails on any em or
+  en dash, since a standing instruction nobody enforces is a suggestion.
+
+  Two more compare every figure in the acceptance table against the
+  evaluator's own output. They caught this table claiming 198 documents
+  where the measurement said 261. Both skip in CI by design: the measured
+  figures are derived data, not version controlled, and CI seeds a small
+  warehouse whose numbers would not match a real one anyway.
 - **Golden-fixture parser tests**: `tests/fixtures/aai_annex4_sample.pdf`
   is a real AAI page. If AAI reshapes the table, CI fails instead of the
   pipeline silently ingesting nothing.
