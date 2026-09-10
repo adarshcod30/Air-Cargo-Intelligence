@@ -158,7 +158,7 @@ flowchart LR
 | 1 | **Ingestion** | Discover and fetch source artefacts, checksum them, archive raw copies, record `source_document` rows |
 | 2 | **Cleaning & Reconciliation** | Canonicalise airport and airline codes, normalise units to kilograms, align fiscal to calendar periods, deduplicate overlapping reports |
 | 3 | **Trend Analysis** | Compute YoY, MoM, CAGR, market-share shift, and seasonal decomposition across all dimensions |
-| 4 | **Anomaly Detection** | Flag unusual movements using STL residual z-scores and an Isolation Forest ensemble, scored by severity |
+| 4 | **Anomaly Detection** | Flag unusual movements using STL residual z-scores (only where the series carries five complete seasonal cycles), a robust median/MAD z-score against a trailing window, the consensus of the two, and a structural detector for services starting and stopping, scored by severity |
 | 5 | **Forecast** | Produce short-horizon forecasts with prediction intervals, validated by rolling-origin backtest |
 | 6 | **Insight Narrative** | Write grounded explanations over supplied rows, with a citation for every claim |
 

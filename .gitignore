@@ -21,7 +21,7 @@ out/
 .env.*
 !.env.example
 
-# Data — raw artefacts and derived extracts are not version controlled
+# Data: raw artefacts and derived extracts are not version controlled
 data/raw/
 data/interim/
 data/processed/
@@ -44,5 +44,6 @@ Thumbs.db
 
 # Alembic local state
 db/migrations/__pycache__/
+
+# Deployment
 .vercel
-.env*

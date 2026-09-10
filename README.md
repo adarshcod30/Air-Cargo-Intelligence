@@ -397,9 +397,9 @@ airline-level: 141 of them carry no airport column at all and name the
 carrier only in the dataset title. That is not a gap in the source, it is
 a second grain, and it supplies the airline dimension no other source
 provides. Forcing it into the airport shape, or discarding it, would both
-have been wrong - so `CargoFact` records its `grain`.
+have been wrong, so `CargoFact` records its `grain`.
 
-**On the OGD platform key.** One API key covers the entire platform - this
+**On the OGD platform key.** One API key covers the entire platform, and this
 was verified against the live API, not assumed. Datasets are addressed by
 `resource_id` (a UUID), so nothing needs downloading by hand: the
 catalogue endpoint is paged once to discover every air-cargo resource,
@@ -408,8 +408,8 @@ matches **both** an aviation term and a cargo term, so railway freight
 and airport passenger tables are excluded rather than swept in.
 
 A useful side effect: DGCA's statistics are republished on the OGD
-platform, so the DGCA portal - whose report links are rendered
-client-side and expose no static hrefs - does not need to be scraped.
+platform, so the DGCA portal (whose report links are rendered
+client-side and expose no static hrefs) does not need to be scraped.
 
 AAI publishes freight as **Annexure IV**, split IV-A international, IV-B
 domestic, IV-C total. Section headings appear only on the first page of
@@ -543,7 +543,7 @@ match the check instead.
 | Component | Metric | Target | Measured | Status |
 |---|---|---|---|---|
 | Ingestion | Rows reconciled without manual mapping<br><sub>measured by replaying extraction over the whole archived corpus, not by whatever the last crawl happened to touch</sub> | ≥ 95% | 99.6% (12,740/12,790) | **met** |
-| Ingestion | Documents either extracted or refused with a reason<br><sub>154 extracted, 44 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (198/198) | **met** |
+| Ingestion | Documents either extracted or refused with a reason<br><sub>246 extracted, 15 refused, each with a recorded reason in the run trace</sub> | 100% | 100% (261/261) | **met** |
 | Ingestion | INTL + DOM = TOTAL, recomputed from stored rows | ≥ 99% | 99.3% (1,640/1,651) | **met** |
 | Provenance | Facts traceable to a source document<br><sub>enforced by a NOT NULL constraint, not by convention</sub> | 100% | 100% | **met** |
 | Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series (naive, drift, recent-mean, seasonal-naive, SARIMA) and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
@@ -558,11 +558,12 @@ match the check instead.
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
 
 **Current dataset:** 12,238 cargo facts and 28,108 operating metrics
-covering **158 airports**, **19 airlines** and **79 reporting
-periods**, drawn from 219 source documents across three publishers. Analytics
-over it produced 11,780 trend rows, 117 alerts, 499 forecasts and
-56 written explanations, against 31 ground-truth labels covering 21
-distinct events.
+covering **158 airports**, **19 airlines** and **79 reporting periods**,
+drawn from 235 source documents across three publishers. Analytics over it
+produced 11,780 trend rows, 114 alerts, 499 forecasts and 22 written
+explanations, against 38 ground-truth labels covering 28 distinct events,
+7 of them hand-judged. The retrieval index holds 1,410 passages, and the
+agent layer has recorded 1,144 runs across 6,431 traced steps.
 
 ### How the forecast error came down
 
@@ -719,8 +720,11 @@ possible, and neither was added for the deployment:
 - The API imports no analytics. Forecasts, trends and anomalies are
   computed by the scheduled pipeline and read back as rows, so the serving
   bundle needs neither `statsmodels` nor `scipy`: together those exceed
-  the serverless size limit outright. `requirements.txt` is the serving
-  subset; local development installs the full set from `pyproject.toml`.
+  the serverless size limit outright. `pyproject.toml` is the single
+  declaration, with the parsing and forecasting dependencies behind
+  `[ingest]` and `[analytics]` extras the function never installs. There
+  is no `requirements.txt`: having both meant the builder read one and the
+  developer read the other, which is how `fastapi` came to be undeclared.
 - The serving role holds `SELECT` on views and nothing else, so exposing
   the database to a function that the public can reach does not widen what
   that function can read.
@@ -753,16 +757,51 @@ accumulated it, `requirements.txt` named it correctly, and the builder reads
 `pyproject.toml` in preference. Both had been latent since the project
 started; neither is reachable from a developer machine.
 
-- **Local run:** PostgreSQL plus a Python virtualenv. No containers - the
+A third only appeared once the pipeline ran unattended. Discovery's
+`fetch_index` tool took a `url` argument, so the model policy supplied
+one: `"AAI's cargo documents page URL"`, a description of a URL rather
+than a URL. The fetch could not connect and the error read like the
+publisher blocking a hosted runner, which is what it was first diagnosed
+as. The source is known when the agent is constructed, so there was never
+a question for the model to answer, and an outbound request to an
+arbitrary string is a worse thing to hand it than a number. The tool now
+advertises no arguments and reads the registry.
+
+- **Local run:** PostgreSQL plus a Python virtualenv. No containers: the
   stack is one database and one process, and a container layer would add
   a build step without removing a dependency.
 - **Migrations:** Alembic, version-controlled under `db/migrations/`, with
   the views and the read-only role applied from `db/views.sql` and
   `db/readonly_role.sql`.
 - **Scheduling:** `python -m services.scheduler` runs ingest, load,
-  analytics and insights in order. Runs cannot overlap: a lock file makes
-  a second run refuse, because two concurrent crawls is precisely how
-  this project got rate limited by a publisher.
+  analytics and insights in order, driven nightly at 03:00 UTC by
+  `.github/workflows/scheduled-ingest.yml`. Runs cannot overlap: a lock
+  file makes a second run refuse, because two concurrent crawls is
+  precisely how this project got rate limited by a publisher.
+
+  The job checks its secrets before it crawls. Without that it spent four
+  minutes fetching documents and then died at the load stage on a missing
+  `DATABASE_URL`, which reads as a pipeline fault rather than a
+  configuration gap. It needs four repository secrets, none of which can
+  be inferred:
+
+  | Secret | Without it |
+  |---|---|
+  | `DATABASE_URL` | The job refuses to start. Nothing to write to. |
+  | `DATA_GOV_IN_API_KEY` | Open-data sources are skipped; AAI still ingests. |
+  | `AWS_ACCESS_KEY_ID` | Narration falls back to templated prose. |
+  | `AWS_SECRET_ACCESS_KEY` | As above. |
+
+  The AWS pair matters more than it looks. Without them the run still
+  succeeds and the insight agent quietly writes templates instead of
+  prose, which is invisible in the output. Bedrock enables itself only
+  when a key is present, so the degradation is at least deliberate.
+
+  ```bash
+  # Values come from your own .env; nothing lands in shell history
+  grep '^DATABASE_URL=' .env | cut -d= -f2- | gh secret set DATABASE_URL
+  gh workflow run scheduled-ingest.yml && sleep 5 && gh run watch
+  ```
 - **CI/CD:** GitHub Actions runs `ruff`, `mypy` and `pytest` against a
   real Postgres on every push, applying the migrations, views and
   read-only role first.
@@ -797,53 +836,89 @@ Air-Cargo-Intelligence/
 │   └── airport_aliases.csv   # Curated overlay: renames + UDAN-era airports
 ├── services/
 │   ├── common/               # Domain models, config, logging
+│   ├── agents/               # The agentic layer: goal, tools, budget, trace
+│   │   ├── base.py           # The loop, the spin guard, per-run token accounting
+│   │   ├── policy.py         # HeuristicPolicy and BedrockPolicy, one interface
+│   │   ├── discovery_agent.py
+│   │   ├── extraction_agent.py
+│   │   ├── reconciliation_agent.py
+│   │   ├── analytics_agent.py
+│   │   ├── insight_agent.py
+│   │   └── orchestrator.py   # Pipeline stages and CLI
 │   ├── ingestion/
 │   │   ├── registry.py       # Source registry with honest per-source status
 │   │   ├── fetcher.py        # Magic-byte content verification
-│   │   ├── store.py          # Raw archive + provenance ledger
+│   │   ├── store.py          # Raw archive and provenance ledger
 │   │   ├── normalise.py      # Units, airport identity, periods
 │   │   ├── seed.py           # Builds the airport crosswalk
-│   │   ├── datagovin_catalog.py  # OGD catalogue discovery
+│   │   ├── datagovin_catalog.py       # Open-data catalogue discovery
+│   │   ├── aai_traffic.py             # Annexure parsing for passenger annexures
+│   │   ├── operating_metrics.py       # ATM, ASKM, RPKM, freight per departure
 │   │   └── parsers/          # aai_freight, eurostat_freight, datagovin
 │   ├── warehouse/
-│   │   ├── schema.py         # Star schema; guarantees live in the DB
-│   │   ├── loader.py         # Idempotent upsert from facts to warehouse
-│   │   └── queries.py        # One definition per metric
+│   │   ├── schema.py         # Star schema; the guarantees live in the DB
+│   │   ├── loader.py         # Batched idempotent upsert
+│   │   ├── queries.py        # One definition per metric
+│   │   └── traces.py         # Agent runs and steps, persisted
 │   ├── analytics/
-│   │   ├── trend.py          # YoY, MoM, CAGR, share, STL
-│   │   ├── anomaly.py        # Robust z-score + STL residual
-│   │   └── forecast.py       # SARIMA vs baseline, rolling-origin backtest
+│   │   ├── trend.py          # YoY, MoM, CAGR, share, STL with a cycle floor
+│   │   ├── anomaly.py        # Robust z on a trailing window, STL residual,
+│   │   │                     #   consensus, and structural transitions
+│   │   ├── forecast.py       # Five candidates, rolling-origin backtest, gate
+│   │   └── operations.py     # Efficiency, concentration, growth attribution
+│   ├── rag/
+│   │   ├── chunker.py        # Passage splitting with stable ids
+│   │   ├── embedder.py       # Titan embeddings, batched
+│   │   ├── index.py          # pgvector HNSW plus full text
+│   │   └── retriever.py      # Reciprocal rank fusion over both
 │   ├── semantic/
 │   │   ├── registry.py       # One definition per metric; the allowlist
 │   │   ├── compiler.py       # Names in, read-only SQL out
 │   │   ├── executor.py       # Runs it, attaches provenance
-│   │   └── nl.py             # Intent -> registered metrics -> prose
-│   └── api/
-│       ├── main.py           # FastAPI routes; also serves the dashboard
-│       └── schemas.py        # Request/response contracts
-├── web/                      # Dashboard and alert feed (served at /)
+│   │   └── nl.py             # Intent to registered metrics to prose
+│   ├── evaluation/
+│   │   ├── acceptance.py     # Every criterion, measured from the warehouse
+│   │   ├── anomaly_labels.py # Ground truth for the alert feed, and its CLI
+│   │   ├── publisher_consistency.py   # Where the source contradicts itself
+│   │   └── policy_ab.py      # Heuristic against model, same goals
+│   ├── reporting/
+│   │   └── brief.py          # The monthly brief, HTML and Markdown
+│   ├── common/
+│   │   ├── models.py         # Domain types shared across stages
+│   │   ├── bedrock.py        # Converse API client, usage counters
+│   │   ├── config.py         # Settings; no filesystem writes at import
+│   │   └── logging.py        # Structured logs with credential redaction
+│   ├── api/
+│   │   ├── main.py           # FastAPI routes; also serves the dashboard
+│   │   ├── agents_routes.py  # Traces, stats, replay
+│   │   ├── operations_routes.py
+│   │   └── schemas.py        # Request and response contracts
+│   └── scheduler.py          # Ingest, load, analytics, insights, in order
+├── web/                      # Dashboard and alert feed, served at /
 │   ├── index.html
 │   ├── styles.css
 │   └── app.js
-│   └── agents/
-│       ├── base.py           # The agent loop: goal, tools, budget, trace
-│       ├── policy.py         # HeuristicPolicy + LLMPolicy
-│       ├── discovery_agent.py
-│       ├── extraction_agent.py
-│       ├── reconciliation_agent.py
-│       ├── analytics_agent.py
-│       └── orchestrator.py   # Pipeline + CLI
-├── db/migrations/            # Alembic revisions
+├── api/index.py              # Serverless entry point
+├── db/
+│   ├── migrations/           # Alembic revisions, one linear chain
+│   ├── views.sql             # The read surface the serving role can see
+│   └── readonly_role.sql     # SELECT on views only, nothing else
 ├── tests/
-│   ├── unit/                 # 288 tests
-│   └── fixtures/             # Golden AAI PDF, the layout-change tripwire
+│   ├── unit/                 # 334 tests
+│   ├── fixtures/             # Golden AAI PDF, the layout-change tripwire
+│   └── seed_warehouse.py     # Seeds CI so the API tests have data
 ├── pyproject.toml
 └── README.md
 ```
 
 ## Getting Started
 
-> **Project status:** the architecture, data model, and specification are complete. Implementation is in progress: the commands below describe the intended developer workflow and will land alongside the services they invoke. Track progress in the [roadmap](#roadmap).
+> **Project status:** built, deployed and measured. Every command below runs
+> today against the live warehouse. Fourteen of fourteen acceptance criteria
+> are measured and met, with none deferred, and the figures in this README
+> are printed by `python -m services.evaluation.acceptance` rather than
+> written by hand. See the [roadmap](#roadmap) for what is deliberately out
+> of scope.
 
 ### Prerequisites
 
@@ -975,7 +1050,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat/query \
 
 `understood_as` is returned on every answer so a misreading is visible
 rather than hidden behind a confident sentence, and `grounded` is the
-result of an actual check, not a claim - see below.
+result of an actual check, not a claim. See below.
 
 ### How the grounding guarantee is enforced
 
@@ -993,7 +1068,7 @@ Three mechanisms, none of which relies on instructing a model politely:
    returned. An answer quoting a number that is not in its own result
    set is suppressed rather than sent.
 
-That last check has already caught real bugs in itself - a `Decimal`
+That last check has already caught real bugs in itself: a `Decimal`
 that no `isinstance(x, float)` would match, and the period label
 `2026-07` being read as the figure -7.
 
@@ -1065,13 +1140,22 @@ curl -s -X POST "https://air-cargo-intelligence.vercel.app/api/v1/chat/query" \
 ## Testing
 
 ```bash
-pytest -q                 # 288 tests
+pytest -q                 # 334 tests
 ruff check services tests
 ```
 
 The suite is ordered by bugs-caught-per-effort, and every case in it comes
 from a failure actually observed against live data:
 
+- **Documentation tests**: this README is checked against the code. One
+  test fails if it names a library the codebase does not have, which it did
+  for five of them at one point. Another fails on any em or en dash, since
+  house style forbids them and a standing instruction nobody enforces is a
+  suggestion. Two more compare every figure in the acceptance table against
+  `data/processed/acceptance.json`, and caught this table claiming 198
+  documents where the measurement said 261. Those two skip in CI by design:
+  the measured figures are derived data, not version controlled, and CI
+  seeds a small warehouse whose numbers would not match.
 - **Golden-fixture parser tests**: `tests/fixtures/aai_annex4_sample.pdf`
   is a real AAI page. If AAI reshapes the table, CI fails instead of the
   pipeline silently ingesting nothing.
@@ -1104,10 +1188,29 @@ from a failure actually observed against live data:
 - [x] Scheduling, `/metrics`, and CI against a real Postgres
 - [x] Acceptance criteria measured rather than intended
 
-**Phase 3 · Scale: open**
-- [ ] Review enough alerts by hand to make precision measurable. The
-      rule-derived labels cover recall, but only a person can call an alert
-      spurious
+**Phase 3 · Evaluation: complete**
+- [x] Ground truth for the alert feed, with the two rejected proxies recorded
+      alongside the rule that survived
+- [x] Structural detection for services starting and stopping, the class the
+      z-score detectors are blind to by construction
+- [x] Prediction intervals calibrated and their coverage measured on
+      held-out folds
+- [x] Alert precision hand-labelled and measured, and the two detector
+      defects that exposed, fixed rather than tuned around
+- [x] Publisher self-consistency audit: 22 rows where the source contradicts
+      its own year-to-date
+- [x] Per-run token accounting, so the console reports a measurement rather
+      than a structural zero
+- [x] All fourteen acceptance criteria measured, none deferred
+
+**Phase 4 · Scale: open**
+- [ ] Wire the publisher consistency check into the pipeline as a suppression
+      filter. It is an audit tool today, and it would remove the two
+      remaining false positives at source rather than after the fact
+- [ ] Extend the labelled set beyond 28 events. Precision of 0.83 is real but
+      would carry more weight over fifty judgements than over seven
+- [ ] Act on the other 20 publisher contradictions, which are recorded and
+      reproducible but not yet reflected in the warehouse
 - [ ] More global sources (IATA, Eurostat beyond the eight airports held)
 - [ ] Route-level and lane-level intelligence
 - [ ] Commodity detail, which needs a source that publishes it.
