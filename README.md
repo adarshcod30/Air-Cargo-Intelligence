@@ -549,10 +549,10 @@ match the check instead.
 | Forecast | Median backtest MAPE (1 step)<br><sub>five candidates compete per series (naive, drift, recent-mean, seasonal-naive, SARIMA) and the rolling-origin backtest picks the winner</sub> | ≤ 12% | **11.1%** | **met** |
 | Forecast | Series with a publishable forecast<br><sub>of series still carrying traffic; reported beside the error because a median over published forecasts alone can be improved by publishing less</sub> | ≥ 70% | **74% (167/226)** | **met** |
 | Forecast | 80% interval coverage<br><sub>pooled over rolling-origin folds, counting how often the published band contained the actual, not averaged per series, which would weight a 3-fold series like a 30-fold one</sub> | 75-85% | **82.4% (413/501)** | **met** |
-| Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.6** | **met** |
-| Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.6** | **met** |
-| Anomaly | Recall on labelled events<br><sub>over the 7 labelled events material enough for an operations feed; 14 further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.38</sub> | ≥ 0.70 | **1.00 (7/7)** | **met** |
-| Anomaly | Precision at 80% recall<br><sub>the set holds no labelled *spurious* alert, so a precision over it is not evidence. The rule that would supply them checked 1,526 complete component triples and found the worst mismatch at 0.54%: rounding, not a defect. A false positive needs a person to assert an alert was spurious; no rule can</sub> | ≥ 0.70 | awaiting review | not measurable |
+| Anomaly | Alerts per month<br><sub>one per entity-period, at the direction that best explains it, above an absolute materiality bar</sub> | ≤ 5 | **3.1** | **met** |
+| Anomaly | Distinct entities alerted per month<br><sub>the number a reader actually sees</sub> | ≤ 5 | **3.1** | **met** |
+| Anomaly | Recall on labelled events<br><sub>over the labelled events material enough for an operations feed; further real-but-immaterial events are deliberately suppressed, and counting those recall is 0.44</sub> | ≥ 0.70 | **1.00 (9/9)** | **met** |
+| Anomaly | Precision at 80% recall<br><sub>over 5 hand-labelled spurious alerts and 23 genuine ones. The two false positives left are both cases where the publisher's own figure was later contradicted or restated, which the detector cannot see from the series alone</sub> | ≥ 0.70 | **0.83** | **met** |
 | Chat | Intent accuracy on the question bank<br><sub>14 questions, two of them deliberately out of scope</sub> | ≥ 90% | 100.0% (14/14) | **met** |
 | Chat | Answers passing the grounding check | 100% | 100.0% (14/14) | **met** |
 | Chat | Answers with figures that carry a source | 100% | 100.0% (14/14) | **met** |
@@ -633,10 +633,65 @@ one definition. Sharing code would make recall tautological (the detector
 scored against its own output), which is precisely why a genuine 0/41 was
 possible. A test asserts the two agree, so they cannot drift apart silently.
 
-**Precision remains unmeasurable, and is reported that way.** A false
-positive requires a label asserting that an alert is *spurious*, and no
-rule can assert that, only a person looking at the month. The review queue
-exists for whoever does:
+**Precision is now measured at 0.83**, over five hand-labelled spurious
+alerts and twenty-three genuine ones. Getting there meant labelling by
+hand, and the labelling found two detector defects that an unmeasured row
+had been hiding.
+
+The first was the decomposition. Kolkata's domestic freight had three
+complete seasonal cycles, and STL gives each calendar month a sub-series of
+one point per cycle. A LOESS fit through three points interpolates rather
+than fits: it passes exactly through the first and last, so those get a
+residual of zero and the middle point carries the whole error. Kolkata's
+May seasonal component read +293, -818, -671, +2213 across four years,
+calling May below normal in the two years May was the annual peak, and both
+middle Mays were reported as anomalies. Measured over synthetic series with
+known seasonality, the share of sub-series endpoints landing within 1% of
+zero residual runs 67% at two cycles, 99% at three, 37% at four and 5% at
+five. The requirement moved from two cycles to five.
+
+The second was the baseline. The robust z-score compared every month
+against the median of the entire series, so an airport that had grown was
+measured against its own smaller past. That baseline is now a trailing
+twelve-month window. The fix immediately proved one of my own labels wrong:
+Chandigarh still scored 7.8 against a *recent* baseline, and every month
+from April 2026 exceeds the entire prior maximum, so it is a real level
+shift and the label was corrected from spurious to genuine.
+
+The two false positives that remain are both cases the detector cannot see
+from the series alone, because the publisher contradicted its own figure
+later. Finding them turned up a source of ground truth nobody had used.
+
+### The publisher checks its own arithmetic, and sometimes fails it
+
+The AAI annexure prints each month's tonnage and the fiscal-year-to-date
+side by side. Within a year the cumulative must advance by exactly the
+month. That identity is asserted on the publisher's own page and is
+independent of anything the detector reads, which is what makes it ground
+truth rather than another opinion about the series.
+
+Nothing had checked it. Over the archived annexures it finds **22 rows
+where a published month cannot be reconciled with the published
+year-to-date**, including both remaining false positives:
+
+| Case | What the page says |
+|---|---|
+| Mopa (Goa), April 2023 | Prints 12,234 MT. May's year-to-date is 28 MT, so April was about 12 MT. Wrong by a factor of a thousand, and it was reported as a 6,628% rise. |
+| Bhubaneswar, November 2023 | Prints 4,004 MT, and October and December cumulatives agree. Then January's year-to-date falls from 10,763 to 8,271. A year-to-date cannot decrease; the year was restated down by 2,492 MT. |
+
+```bash
+python -m services.evaluation.publisher_consistency
+```
+
+It reports the gap rather than an implied month, because attributing the
+discrepancy to the month in hand produces impossible values when the wrong
+figure is upstream: Mopa's May would read as -12,206 MT. The check proves
+two published numbers disagree. It does not know which is wrong, and a
+tool that printed a third number would invite the reader to think it did.
+
+A false positive requires a label asserting that an alert is *spurious*,
+and no rule can assert that, only a person looking at the month. The review
+queue is how that gets done:
 
 ```bash
 python -m services.evaluation.anomaly_labels --seed      # rule-derived labels

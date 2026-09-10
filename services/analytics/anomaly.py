@@ -60,6 +60,51 @@ def robust_z_scores(values: list[float]) -> np.ndarray:
     return 0.6745 * (arr - median) / mad
 
 
+LOCAL_WINDOW = 12
+
+
+def local_robust_z(values: list[float], window: int = LOCAL_WINDOW) -> tuple[np.ndarray, np.ndarray]:
+    """Robust z against the recent past, with the baseline it used.
+
+    The whole-series median is the wrong yardstick for a series with a
+    trend. Chandigarh's domestic freight roughly doubled over three years,
+    so its recent months were scored against a median drawn largely from
+    when the airport was half its size, and 2026-05 and 2026-06 were both
+    reported as anomalies at +98% and +132% against an expected 1,086 MT
+    that was simply the median of the whole series. The airport had grown.
+    Nothing happened in May.
+
+    A trailing window asks the question the reader actually has: is this
+    month unlike the recent past. Points too early to have a full window
+    keep the whole-series comparison, since there is nothing else to use.
+    """
+    arr = np.asarray(values, dtype=float)
+    z = np.zeros_like(arr)
+    baseline = np.full_like(arr, float(np.median(arr)))
+    whole = robust_z_scores(values)
+    for i in range(len(arr)):
+        past = arr[max(0, i - window):i]
+        if len(past) < max(6, window // 2):
+            z[i] = whole[i]
+            continue
+        med = float(np.median(past))
+        mad = float(np.median(np.abs(past - med)))
+        sd = float(past.std())
+        if mad == 0 and sd == 0:
+            # A perfectly flat window has no scale to divide by, and
+            # returning zero here silenced the very case this detector
+            # exists for: eight identical months followed by a fourfold
+            # spike scored 0.0 and went unreported. The whole series still
+            # has dispersion, precisely because of the spike, so defer to
+            # it rather than inventing a local scale.
+            z[i] = whole[i]
+            continue
+        baseline[i] = med
+        z[i] = (0.6745 * (arr[i] - med) / mad if mad
+                else (arr[i] - float(past.mean())) / sd)
+    return z, baseline
+
+
 def trim_leading_zeros(
     periods: list[str], values: list[float]
 ) -> tuple[list[str], list[float]]:
@@ -119,15 +164,15 @@ def detect_statistical(
     if peak > 0 and median / peak < min_median_to_max:
         return []
 
-    z = robust_z_scores(values)
+    z, baseline = local_robust_z(values)
     out: list[AnomalyPoint] = []
-    for p, v, zi in zip(periods, values, z, strict=True):
+    for p, v, zi, base in zip(periods, values, z, baseline, strict=True):
         if abs(zi) < threshold or v < min_kg:
             continue
         out.append(
             AnomalyPoint(
-                period=p, observed_kg=float(v), expected_kg=median,
-                deviation_pct=(round((v - median) / median * 100, 2) if median else None),
+                period=p, observed_kg=float(v), expected_kg=float(base),
+                deviation_pct=(round((v - base) / base * 100, 2) if base else None),
                 z_score=round(float(zi), 3), method="robust_z",
                 severity=_severity(float(zi)),
             )

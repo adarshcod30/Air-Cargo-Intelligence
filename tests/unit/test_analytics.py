@@ -864,3 +864,111 @@ class TestReconciliationCompletion:
         from services.agents.orchestrator import Pipeline
 
         assert Pipeline().reconcile([]) == []
+
+
+class TestSTLNeedsEnoughCycles:
+    """A decomposition that interpolates is not a decomposition."""
+
+    def test_three_cycles_is_refused(self):
+        """Measured, not assumed.
+
+        Each calendar month gets one point per cycle, and LOESS through a
+        handful of points passes exactly through the first and last. Over
+        synthetic series with known seasonality, the share of sub-series
+        endpoints landing within 1% of zero residual runs 67% at two
+        cycles, 99% at three, 37% at four and 5% at five.
+        """
+        from services.analytics.trend import seasonal_decompose
+
+        vals = [1000.0 + 200 * (i % 12) for i in range(36)]
+        assert seasonal_decompose(vals, period=12) is None
+
+    def test_five_cycles_is_allowed(self):
+        from services.analytics.trend import seasonal_decompose
+
+        vals = [1000.0 + 200 * (i % 12) + i for i in range(60)]
+        assert seasonal_decompose(vals, period=12) is not None
+
+    def test_the_kolkata_shape_no_longer_yields_residual_alerts(self):
+        """Its May seasonal component read +293, -818, -671, +2213.
+
+        It called May below normal in the two years May was the annual
+        peak, and reported those two Mays as anomalies at +45% and +35%.
+        Both were false positives made by the decomposition.
+        """
+        from services.analytics.anomaly import detect_seasonal
+
+        vals = [9000.0] * 35
+        for i, v in [(4, 7901.0), (16, 11549.0), (28, 11850.0)]:
+            vals[i] = v
+        per = [f"{2023 + i // 12}-{i % 12 + 1:02d}" for i in range(35)]
+        assert detect_seasonal(per, vals, min_kg=1.0) == []
+
+
+class TestLocalBaseline:
+    """Score against the recent past, not against a series' whole history."""
+
+    def test_a_growing_series_is_scored_against_its_recent_level(self):
+        from services.analytics.anomaly import local_robust_z
+
+        vals = [100.0 + 10 * i for i in range(30)]      # steady growth
+        _, base = local_robust_z(vals)
+        assert base[-1] > vals[0] * 2, "baseline must follow the level"
+
+    def test_a_flat_window_does_not_silence_a_spike(self):
+        """Zero MAD and zero spread left nothing to divide by.
+
+        Returning zero there silenced the case the detector exists for:
+        eight identical months then a fourfold jump scored 0.0.
+        """
+        from services.analytics.anomaly import local_robust_z
+
+        vals = [1000.0] * 8 + [4000.0] + [1000.0] * 3
+        z, _ = local_robust_z(vals)
+        assert abs(z[8]) > 3.0
+
+
+class TestPublisherConsistency:
+    """The publisher asserts an identity on its own page. Check it."""
+
+    def test_a_clean_chain_reports_nothing(self, tmp_path, monkeypatch):
+        from services.evaluation import publisher_consistency as pc
+
+        pages = {
+            "a.pdf": {("DOMESTIC", "X"): (100.0, 100.0)},
+            "b.pdf": {("DOMESTIC", "X"): (50.0, 150.0)},
+        }
+        monkeypatch.setattr(pc, "read_annexure", lambda p: pages[p.rsplit("/", 1)[-1]])
+        led = tmp_path / "l.jsonl"
+        led.write_text(
+            '{"source_url":"x/Apr2k23Annex4.pdf","raw_path":"a.pdf"}\n'
+            '{"source_url":"x/May2k23Annex4.pdf","raw_path":"b.pdf"}\n')
+        monkeypatch.setattr(pc.Path, "exists", lambda self: True)
+        assert pc.contradictions(str(led)) == []
+
+    def test_a_broken_chain_is_caught(self, tmp_path, monkeypatch):
+        """Mopa: April prints 12,234 MT, May's year-to-date says 28."""
+        from services.evaluation import publisher_consistency as pc
+
+        pages = {
+            "a.pdf": {("DOMESTIC", "GOA (MOPA)"): (12234.0, 12234.0)},
+            "b.pdf": {("DOMESTIC", "GOA (MOPA)"): (16.0, 28.0)},
+        }
+        monkeypatch.setattr(pc, "read_annexure", lambda p: pages[p.rsplit("/", 1)[-1]])
+        led = tmp_path / "l.jsonl"
+        led.write_text(
+            '{"source_url":"x/Apr2k23Annex4.pdf","raw_path":"a.pdf"}\n'
+            '{"source_url":"x/May2k23Annex4.pdf","raw_path":"b.pdf"}\n')
+        monkeypatch.setattr(pc.Path, "exists", lambda self: True)
+        (row,) = pc.contradictions(str(led))
+        assert row["gap_mt"] == -12222.0
+        assert "cumulative_implies_month_mt" not in row, (
+            "attributing the gap to this month yields an impossible negative")
+
+    def test_january_belongs_to_the_prior_fiscal_year(self):
+        from services.evaluation.publisher_consistency import _fiscal_key
+
+        assert _fiscal_key("Apr2k23Annex4.pdf") == (2023, 0)
+        assert _fiscal_key("Dec2k23Annex4.pdf") == (2023, 8)
+        assert _fiscal_key("Jan2k24Annex4.pdf") == (2023, 9)
+        assert _fiscal_key("Mar2k24Annex4.pdf") == (2023, 11)
