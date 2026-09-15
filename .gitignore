@@ -52,3 +52,6 @@ db/migrations/__pycache__/
 .env.local
 *.log
 .ipynb_checkpoints/
+
+# test and type-checker artefacts
+coverage.xml
