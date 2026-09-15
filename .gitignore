@@ -54,3 +54,8 @@ db/migrations/__pycache__/
 CLAUDE.local.md
 CLAUDE.md
 AGENTS.md
+
+# secrets, build output and local noise
+.env.local
+*.log
+.ipynb_checkpoints/
