@@ -588,7 +588,7 @@ learning to shrug.
 
 **Current dataset:** 12,238 cargo facts and 28,108 operating metrics
 covering **158 airports**, **19 airlines** and **79 reporting periods**,
-drawn from 235 source documents across three publishers. Analytics over it
+drawn from 246 extracted source documents (261 archived, 15 refused) across three publishers. Analytics over it
 produced 11,780 trend rows, 114 alerts, 499 forecasts and 22 written
 explanations, against 38 ground-truth labels covering 28 distinct events,
 7 of them hand-judged. The retrieval index holds 1,410 passages, and the
